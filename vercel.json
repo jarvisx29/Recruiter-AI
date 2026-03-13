@@ -1,7 +1,8 @@
 {
   "cleanUrls": true,
   "rewrites": [
-    { "source": "/apply", "destination": "/hexaware-apply.html" }
+    { "source": "/",          "destination": "/hexaware-apply.html" },
+    { "source": "/interview", "destination": "/index.html" }
   ],
   "headers": [
     {
