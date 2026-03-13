@@ -1,0 +1,850 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Hexaware — AI Voice Interview</title>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:         #050d1a;
+      --surface:    #0b1628;
+      --surface-2:  #0f1e35;
+      --border:     rgba(255,255,255,0.07);
+      --blue:       #2563eb;
+      --blue-light: #3b82f6;
+      --blue-glow:  rgba(37,99,235,0.35);
+      --accent:     #FF6B35;
+      --green:      #10b981;
+      --red:        #ef4444;
+      --text:       #f0f6ff;
+      --muted:      #64748b;
+      --muted-2:    #94a3b8;
+    }
+
+    html, body {
+      height: 100%;
+      font-family: 'Inter', sans-serif;
+      background: var(--bg);
+      color: var(--text);
+    }
+
+    body {
+      display: flex;
+      flex-direction: column;
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* ── BACKGROUND GRID ── */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; z-index: 0;
+      background-image:
+        linear-gradient(rgba(37,99,235,0.04) 1px, transparent 1px),
+        linear-gradient(90deg, rgba(37,99,235,0.04) 1px, transparent 1px);
+      background-size: 48px 48px;
+      pointer-events: none;
+    }
+
+    body::after {
+      content: '';
+      position: fixed;
+      top: -30%; left: 50%; transform: translateX(-50%);
+      width: 800px; height: 600px;
+      background: radial-gradient(ellipse, rgba(37,99,235,0.12) 0%, transparent 70%);
+      pointer-events: none; z-index: 0;
+    }
+
+    /* ── NAV ── */
+    nav {
+      position: relative; z-index: 10;
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 0 2rem; height: 60px;
+      border-bottom: 1px solid var(--border);
+      background: rgba(5,13,26,0.8);
+      backdrop-filter: blur(12px);
+    }
+
+    .nav-logo {
+      display: flex; align-items: center; gap: 10px;
+    }
+
+    .nav-logo-icon {
+      width: 32px; height: 32px;
+      background: linear-gradient(135deg, var(--accent), #ff8c5a);
+      border-radius: 8px;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 15px; font-weight: 800; color: #fff;
+    }
+
+    .nav-logo-text {
+      font-size: 16px; font-weight: 700; color: var(--text);
+    }
+
+    .nav-logo-text span { color: var(--accent); }
+
+    .nav-badge {
+      display: flex; align-items: center; gap: 6px;
+      font-size: 12px; font-weight: 600; color: var(--muted-2);
+      border: 1px solid var(--border);
+      padding: 4px 12px; border-radius: 20px;
+    }
+
+    .nav-badge-dot {
+      width: 6px; height: 6px;
+      background: var(--green); border-radius: 50%;
+      animation: livePulse 1.5s infinite;
+    }
+
+    @keyframes livePulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* ── MAIN LAYOUT ── */
+    main {
+      flex: 1;
+      display: flex; align-items: center; justify-content: center;
+      padding: 2rem;
+      position: relative; z-index: 1;
+    }
+
+    .interview-container {
+      width: 100%; max-width: 480px;
+    }
+
+    /* ── PHASE INDICATOR ── */
+    .phase-tag {
+      display: inline-flex; align-items: center; gap: 8px;
+      font-size: 11px; font-weight: 700;
+      color: var(--blue-light);
+      text-transform: uppercase; letter-spacing: 1.5px;
+      margin-bottom: 20px;
+    }
+
+    .phase-tag::before {
+      content: '';
+      display: block; width: 20px; height: 1px;
+      background: var(--blue-light);
+    }
+
+    /* ── CARD ── */
+    .card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 24px;
+      overflow: hidden;
+      box-shadow:
+        0 0 0 1px rgba(37,99,235,0.1),
+        0 32px 80px rgba(0,0,0,0.6),
+        0 0 80px rgba(37,99,235,0.06);
+    }
+
+    /* ── CARD HEADER ── */
+    .card-header {
+      padding: 32px 36px 28px;
+      border-bottom: 1px solid var(--border);
+      background: linear-gradient(135deg, rgba(37,99,235,0.08), rgba(37,99,235,0.02));
+      text-align: center;
+    }
+
+    .card-header h1 {
+      font-size: 22px; font-weight: 800;
+      letter-spacing: -0.3px; margin-bottom: 8px;
+    }
+
+    .card-header p {
+      font-size: 14px; color: var(--muted-2); line-height: 1.6;
+    }
+
+    /* ── CARD BODY ── */
+    .card-body {
+      padding: 32px 36px;
+    }
+
+    /* ── MIC PERMISSION STATE ── */
+    #micState { display: block; }
+
+    .mic-permission-wrapper {
+      text-align: center;
+      padding: 16px 0 8px;
+    }
+
+    .mic-permission-icon {
+      font-size: 48px; margin-bottom: 16px;
+      animation: micBob 2s ease-in-out infinite;
+    }
+
+    @keyframes micBob {
+      0%, 100% { transform: translateY(0); }
+      50% { transform: translateY(-6px); }
+    }
+
+    .mic-permission-title {
+      font-size: 18px; font-weight: 800; margin-bottom: 8px;
+    }
+
+    .mic-permission-sub {
+      font-size: 13px; color: var(--muted-2);
+      line-height: 1.6; max-width: 320px; margin: 0 auto 24px;
+    }
+
+    .mic-denied {
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; color: var(--red);
+      margin-bottom: 14px; display: none;
+    }
+
+    .mic-granted-badge {
+      display: none;
+      align-items: center; justify-content: center; gap: 8px;
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.25);
+      border-radius: 10px; padding: 10px;
+      font-size: 13px; font-weight: 600; color: var(--green);
+      margin-bottom: 16px;
+    }
+
+    /* ── SETUP STATE ── */
+    #setupState { display: none; }
+    #interviewState { display: none; }
+    #doneState { display: none; }
+
+    /* ── INPUTS ── */
+    .field {
+      margin-bottom: 14px;
+    }
+
+    label {
+      display: block;
+      font-size: 12px; font-weight: 600;
+      color: var(--muted-2); text-transform: uppercase;
+      letter-spacing: 0.8px; margin-bottom: 7px;
+    }
+
+    input {
+      width: 100%;
+      background: var(--surface-2);
+      border: 1.5px solid var(--border);
+      border-radius: 10px;
+      padding: 12px 14px;
+      font-family: 'Inter', sans-serif;
+      font-size: 14px; color: var(--text);
+      transition: border-color 0.2s, box-shadow 0.2s;
+      outline: none;
+    }
+
+    input::placeholder { color: var(--muted); }
+
+    input:focus {
+      border-color: var(--blue);
+      box-shadow: 0 0 0 3px rgba(37,99,235,0.15);
+    }
+
+    /* ── TIPS ── */
+    .tips {
+      display: flex; flex-direction: column; gap: 8px;
+      margin: 20px 0;
+      padding: 14px 16px;
+      background: rgba(255,255,255,0.02);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+    }
+
+    .tip {
+      display: flex; align-items: center; gap: 10px;
+      font-size: 12px; color: var(--muted-2); line-height: 1.4;
+    }
+
+    .tip-icon { font-size: 14px; flex-shrink: 0; }
+
+    /* ── BUTTONS ── */
+    .btn {
+      width: 100%;
+      padding: 14px;
+      border: none; border-radius: 12px;
+      font-family: 'Inter', sans-serif;
+      font-size: 15px; font-weight: 700;
+      cursor: pointer;
+      transition: transform 0.15s, box-shadow 0.15s, opacity 0.15s;
+      display: flex; align-items: center; justify-content: center; gap: 8px;
+    }
+
+    .btn:active { transform: scale(0.98); }
+
+    .btn-start {
+      background: linear-gradient(135deg, var(--blue), #1d4ed8);
+      color: #fff;
+      box-shadow: 0 4px 20px rgba(37,99,235,0.4);
+    }
+
+    .btn-start:hover:not(:disabled) {
+      box-shadow: 0 6px 28px rgba(37,99,235,0.55);
+      transform: translateY(-1px);
+    }
+
+    .btn-start:disabled {
+      opacity: 0.5; cursor: not-allowed; transform: none;
+      box-shadow: none;
+    }
+
+    .btn-end {
+      background: rgba(239,68,68,0.1);
+      border: 1.5px solid rgba(239,68,68,0.3);
+      color: var(--red);
+      margin-top: 16px;
+    }
+
+    .btn-end:hover {
+      background: rgba(239,68,68,0.18);
+      border-color: rgba(239,68,68,0.5);
+      box-shadow: 0 4px 16px rgba(239,68,68,0.2);
+    }
+
+    /* ── SPINNER ── */
+    .spinner {
+      width: 16px; height: 16px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: #fff;
+      border-radius: 50%;
+      animation: spin 0.7s linear infinite;
+      display: none;
+    }
+
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ── INTERVIEW STATE ── */
+    .mic-wrapper {
+      display: flex; flex-direction: column;
+      align-items: center; padding: 20px 0 24px;
+    }
+
+    .mic-orb {
+      position: relative;
+      width: 100px; height: 100px;
+      margin-bottom: 20px;
+    }
+
+    .mic-orb-ring {
+      position: absolute; inset: 0;
+      border-radius: 50%;
+      border: 2px solid rgba(37,99,235,0.3);
+      animation: orbRing 2s ease-in-out infinite;
+      opacity: 0;
+    }
+
+    .mic-orb-ring:nth-child(2) { animation-delay: 0.5s; }
+    .mic-orb-ring:nth-child(3) { animation-delay: 1s; }
+
+    @keyframes orbRing {
+      0% { transform: scale(0.9); opacity: 0.6; }
+      100% { transform: scale(1.5); opacity: 0; }
+    }
+
+    .mic-orb-core {
+      position: absolute; inset: 12px;
+      background: linear-gradient(135deg, var(--blue), #1d4ed8);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 30px;
+      box-shadow: 0 0 40px rgba(37,99,235,0.5), 0 0 80px rgba(37,99,235,0.2);
+      animation: coreGlow 2s ease-in-out infinite;
+    }
+
+    @keyframes coreGlow {
+      0%, 100% { box-shadow: 0 0 30px rgba(37,99,235,0.5), 0 0 60px rgba(37,99,235,0.15); }
+      50% { box-shadow: 0 0 50px rgba(37,99,235,0.7), 0 0 100px rgba(37,99,235,0.3); }
+    }
+
+    /* Muted state */
+    .mic-orb.muted .mic-orb-core {
+      background: linear-gradient(135deg, #475569, #334155);
+      box-shadow: none;
+      animation: none;
+    }
+
+    .mic-orb.muted .mic-orb-ring { animation: none; opacity: 0; }
+
+    .live-badge {
+      display: inline-flex; align-items: center; gap: 6px;
+      background: rgba(16,185,129,0.1);
+      border: 1px solid rgba(16,185,129,0.25);
+      border-radius: 20px; padding: 5px 12px;
+      font-size: 12px; font-weight: 700; color: var(--green);
+      margin-bottom: 12px;
+    }
+
+    .live-dot {
+      width: 6px; height: 6px;
+      background: var(--green); border-radius: 50%;
+      animation: livePulse 1s infinite;
+    }
+
+    .interview-label {
+      font-size: 16px; font-weight: 700; margin-bottom: 6px;
+      text-align: center;
+    }
+
+    .interview-sublabel {
+      font-size: 13px; color: var(--muted-2);
+      text-align: center; line-height: 1.5;
+    }
+
+    /* ── AUDIO BARS ── */
+    .audio-bars {
+      display: flex; align-items: center; gap: 4px;
+      height: 32px; margin: 16px 0 4px;
+    }
+
+    .bar {
+      width: 4px; border-radius: 2px;
+      background: var(--blue-light);
+      animation: barBounce 1.2s ease-in-out infinite;
+    }
+
+    .bar:nth-child(1) { animation-delay: 0s;    height: 60%; }
+    .bar:nth-child(2) { animation-delay: 0.1s;  height: 100%; }
+    .bar:nth-child(3) { animation-delay: 0.2s;  height: 45%; }
+    .bar:nth-child(4) { animation-delay: 0.3s;  height: 80%; }
+    .bar:nth-child(5) { animation-delay: 0.4s;  height: 55%; }
+    .bar:nth-child(6) { animation-delay: 0.15s; height: 90%; }
+    .bar:nth-child(7) { animation-delay: 0.25s; height: 40%; }
+    .bar:nth-child(8) { animation-delay: 0.35s; height: 70%; }
+
+    @keyframes barBounce {
+      0%, 100% { transform: scaleY(0.4); opacity: 0.6; }
+      50% { transform: scaleY(1); opacity: 1; }
+    }
+
+    .audio-bars.paused .bar {
+      animation: none;
+      transform: scaleY(0.2);
+      opacity: 0.3;
+    }
+
+    /* ── DONE STATE ── */
+    .done-icon {
+      width: 72px; height: 72px;
+      background: linear-gradient(135deg, var(--green), #059669);
+      border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 32px; margin: 0 auto 20px;
+      box-shadow: 0 8px 32px rgba(16,185,129,0.35);
+      animation: popIn 0.4s cubic-bezier(0.34,1.56,0.64,1);
+    }
+
+    @keyframes popIn {
+      from { transform: scale(0); opacity: 0; }
+      to { transform: scale(1); opacity: 1; }
+    }
+
+    .done-title {
+      font-size: 20px; font-weight: 800;
+      text-align: center; margin-bottom: 10px;
+    }
+
+    .done-sub {
+      font-size: 13px; color: var(--muted-2);
+      text-align: center; line-height: 1.7;
+      max-width: 340px; margin: 0 auto;
+    }
+
+    .done-chips {
+      display: flex; justify-content: center; gap: 8px;
+      flex-wrap: wrap; margin-top: 20px;
+    }
+
+    .chip {
+      background: rgba(255,255,255,0.04);
+      border: 1px solid var(--border);
+      border-radius: 20px; padding: 5px 12px;
+      font-size: 12px; font-weight: 600; color: var(--muted-2);
+    }
+
+    /* ── ERROR ── */
+    .error-msg {
+      display: none;
+      background: rgba(239,68,68,0.08);
+      border: 1px solid rgba(239,68,68,0.2);
+      border-radius: 10px; padding: 10px 14px;
+      font-size: 13px; color: var(--red);
+      margin-bottom: 14px;
+      align-items: center; gap: 8px;
+    }
+
+    /* ── FOOTER ── */
+    footer {
+      position: relative; z-index: 1;
+      text-align: center;
+      padding: 20px;
+      font-size: 12px; color: var(--muted);
+      border-top: 1px solid var(--border);
+    }
+
+    footer strong { color: var(--muted-2); }
+
+    @media (max-width: 520px) {
+      .card-header, .card-body { padding: 24px 20px; }
+      nav { padding: 0 1rem; }
+    }
+  </style>
+</head>
+<body>
+
+<!-- NAV -->
+<nav>
+  <div class="nav-logo">
+    <div class="nav-logo-icon">H</div>
+    <div class="nav-logo-text"><span>Hex</span>aware Technologies</div>
+  </div>
+  <div class="nav-badge">
+    <div class="nav-badge-dot"></div>
+    AI Interviewer Live
+  </div>
+</nav>
+
+<!-- MAIN -->
+<main>
+  <div class="interview-container">
+    <div class="phase-tag">Phase 2 — Voice Interview</div>
+
+    <div class="card">
+
+      <!-- MIC PERMISSION STATE -->
+      <div id="micState">
+        <div class="card-header">
+          <h1>🎙️ AI Voice Interview</h1>
+          <p>Hexaware's AI interviewer needs microphone access to conduct your interview.</p>
+        </div>
+        <div class="card-body">
+          <div class="mic-permission-wrapper">
+            <div class="mic-permission-icon" id="micIcon">🎤</div>
+            <div class="mic-permission-title" id="micTitle">Microphone Access Required</div>
+            <div class="mic-permission-sub" id="micSub">Click below to allow microphone access. This is required for the voice interview. Your audio is only used during the interview session.</div>
+
+            <div class="mic-denied" id="micDenied">
+              ⚠️ Microphone access was denied. Please allow it in your browser settings and reload the page.
+            </div>
+
+            <div class="mic-granted-badge" id="micGranted">
+              ✅ Microphone access granted — you're ready to start!
+            </div>
+
+            <button class="btn btn-start" id="micBtn">
+              <div class="spinner" id="micSpinner"></div>
+              <span id="micBtnText">🎤 Allow Microphone</span>
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <!-- SETUP STATE -->
+      <div id="setupState">
+        <div class="card-header">
+          <h1>🎙️ AI Voice Interview</h1>
+          <p>You're about to speak with Hexaware's AI interviewer.<br />Ensure you're in a quiet environment before starting.</p>
+        </div>
+
+        <div class="card-body">
+          <div class="error-msg" id="errorMsg">
+            ⚠️ <span id="errorText">Something went wrong. Please try again.</span>
+          </div>
+
+          <div class="field">
+            <label for="email">Email Address</label>
+            <input type="email" id="email" placeholder="you@example.com" />
+          </div>
+
+          <div class="field">
+            <label for="name">First Name</label>
+            <input type="text" id="name" placeholder="e.g. Alex" />
+          </div>
+
+          <div class="tips">
+            <div class="tip"><span class="tip-icon">🎧</span> Use headphones for the best experience</div>
+            <div class="tip"><span class="tip-icon">🤫</span> Find a quiet space before starting</div>
+            <div class="tip"><span class="tip-icon">🗣️</span> Speak clearly and at a natural pace</div>
+          </div>
+
+          <button class="btn btn-start" id="startBtn">
+            <div class="spinner" id="startSpinner"></div>
+            <span id="startBtnText">▶ Start Interview</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- INTERVIEW STATE -->
+      <div id="interviewState">
+        <div class="card-header">
+          <h1>🎙️ Interview in Progress</h1>
+          <p>Speak naturally — the AI will guide you through the questions.</p>
+        </div>
+
+        <div class="card-body">
+          <div class="mic-wrapper">
+            <div class="mic-orb" id="micOrb">
+              <div class="mic-orb-ring"></div>
+              <div class="mic-orb-ring"></div>
+              <div class="mic-orb-ring"></div>
+              <div class="mic-orb-core">🎙️</div>
+            </div>
+
+            <div class="live-badge">
+              <div class="live-dot"></div>
+              Live Interview
+            </div>
+
+            <div class="interview-label" id="interviewLabel">Connected — Interview Active</div>
+            <div class="interview-sublabel" id="interviewSublabel">Listen carefully and respond when prompted</div>
+
+            <div class="audio-bars" id="audioBars">
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+              <div class="bar"></div>
+            </div>
+          </div>
+
+          <button class="btn btn-end" id="endBtn">
+            ⏹ End Interview
+          </button>
+        </div>
+      </div>
+
+      <!-- DONE STATE -->
+      <div id="doneState">
+        <div class="card-header">
+          <h1>Interview Complete</h1>
+          <p>Thank you for your time. We'll be in touch soon.</p>
+        </div>
+
+        <div class="card-body" style="text-align:center; padding-top: 36px; padding-bottom: 36px;">
+          <div class="done-icon">✓</div>
+          <div class="done-title">You're all done!</div>
+          <div class="done-sub">Your interview has been recorded and will be reviewed by our team. If you're a strong fit, you'll receive an offer letter via email within 24 hours.</div>
+          <div class="done-chips">
+            <div class="chip">✅ Interview Submitted</div>
+            <div class="chip">⏱ Under Review</div>
+            <div class="chip">📧 Check Your Inbox</div>
+          </div>
+        </div>
+      </div>
+
+    </div><!-- /card -->
+  </div>
+</main>
+
+<!-- FOOTER -->
+<footer>
+  <strong>Hexaware Technologies</strong> &nbsp;·&nbsp; Powered by Retell AI &nbsp;·&nbsp; &copy; 2025
+</footer>
+
+<script type="module">
+  import { RetellWebClient } from "https://esm.run/retell-client-js-sdk";
+
+  const micState      = document.getElementById('micState');
+  const setupState    = document.getElementById('setupState');
+  const interviewState = document.getElementById('interviewState');
+  const doneState     = document.getElementById('doneState');
+  const startBtn      = document.getElementById('startBtn');
+  const startSpinner  = document.getElementById('startSpinner');
+  const startBtnText  = document.getElementById('startBtnText');
+  const endBtn        = document.getElementById('endBtn');
+  const errorMsg      = document.getElementById('errorMsg');
+  const errorText     = document.getElementById('errorText');
+  const micOrb        = document.getElementById('micOrb');
+  const audioBars     = document.getElementById('audioBars');
+  const interviewLabel    = document.getElementById('interviewLabel');
+  const interviewSublabel = document.getElementById('interviewSublabel');
+
+  // Mic permission elements
+  const micBtn        = document.getElementById('micBtn');
+  const micSpinner    = document.getElementById('micSpinner');
+  const micBtnText    = document.getElementById('micBtnText');
+  const micDenied     = document.getElementById('micDenied');
+  const micGranted    = document.getElementById('micGranted');
+  const micIcon       = document.getElementById('micIcon');
+  const micTitle      = document.getElementById('micTitle');
+  const micSub        = document.getElementById('micSub');
+
+  let client = null;
+  let micReady = false;
+
+  function showError(msg) {
+    errorText.textContent = msg;
+    errorMsg.style.display = 'flex';
+  }
+
+  function hideError() {
+    errorMsg.style.display = 'none';
+  }
+
+  function showState(state) {
+    micState.style.display      = 'none';
+    setupState.style.display    = 'none';
+    interviewState.style.display = 'none';
+    doneState.style.display     = 'none';
+    if (state === 'mic')       micState.style.display = 'block';
+    if (state === 'setup')     setupState.style.display = 'block';
+    if (state === 'interview') interviewState.style.display = 'block';
+    if (state === 'done')      doneState.style.display = 'block';
+  }
+
+  // ── Mic Permission Flow ──────────────────────────────────────────
+  async function requestMicPermission() {
+    micSpinner.style.display = 'block';
+    micBtnText.textContent = 'Requesting access…';
+    micBtn.disabled = true;
+
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      // Stop all tracks immediately — we just needed the permission grant
+      stream.getTracks().forEach(t => t.stop());
+
+      micReady = true;
+      micIcon.textContent = '✅';
+      micIcon.style.animation = 'none';
+      micTitle.textContent = 'Microphone Ready';
+      micSub.style.display = 'none';
+      micGranted.style.display = 'flex';
+      micSpinner.style.display = 'none';
+      micBtnText.textContent = 'Continue →';
+      micBtn.disabled = false;
+      micBtn.onclick = () => showState('setup');
+
+    } catch (err) {
+      micSpinner.style.display = 'none';
+      micBtnText.textContent = '🎤 Allow Microphone';
+      micBtn.disabled = false;
+      micDenied.style.display = 'block';
+      micIcon.textContent = '🚫';
+      micIcon.style.animation = 'none';
+    }
+  }
+
+  // Check if permission already granted on page load
+  async function checkMicOnLoad() {
+    try {
+      const result = await navigator.permissions.query({ name: 'microphone' });
+      if (result.state === 'granted') {
+        // Already granted — skip mic state, go straight to setup
+        micReady = true;
+        showState('setup');
+        return;
+      }
+    } catch (e) {
+      // permissions API not supported — show mic state anyway
+    }
+    showState('mic');
+  }
+
+  micBtn.addEventListener('click', requestMicPermission);
+
+  // Run on load
+  checkMicOnLoad();
+
+  // ── Start Interview ──────────────────────────────────────────────
+  startBtn.addEventListener('click', async () => {
+    const email = document.getElementById('email').value.trim();
+    const firstName = document.getElementById('name').value.trim();
+
+    if (!email || !firstName) {
+      showError('Please fill in both your email and first name.');
+      return;
+    }
+
+    hideError();
+    startBtn.disabled = true;
+    startSpinner.style.display = 'block';
+    startBtnText.textContent = 'Connecting…';
+
+    try {
+      const response = await fetch(
+        'https://primary-production-38fd.up.railway.app/webhook/start-interview',
+        {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ email, firstName })
+        }
+      );
+
+      const data = await response.json();
+
+      if (!data.accessToken) {
+        throw new Error('No access token received from server.');
+      }
+
+      client = new RetellWebClient();
+
+      client.on('call_started', () => {
+        showState('interview');
+      });
+
+      client.on('call_ended', () => {
+        showState('done');
+        client = null;
+      });
+
+      client.on('error', (err) => {
+        console.error('Retell error:', err);
+        showState('setup');
+        showError('Call error: ' + (err?.message || 'Unknown error'));
+        startBtn.disabled = false;
+        startSpinner.style.display = 'none';
+        startBtnText.textContent = '▶ Start Interview';
+        client = null;
+      });
+
+      await client.startCall({
+        accessToken: data.accessToken,
+        sampleRate: 24000
+      });
+
+    } catch (err) {
+      console.error(err);
+      showError('Failed to start the interview. Please check your connection and try again.');
+      startBtn.disabled = false;
+      startSpinner.style.display = 'none';
+      startBtnText.textContent = '▶ Start Interview';
+    }
+  });
+
+  // ── End Interview ────────────────────────────────────────────────
+  endBtn.addEventListener('click', async () => {
+    endBtn.disabled = true;
+    endBtn.textContent = 'Ending…';
+
+    interviewLabel.textContent = 'Ending interview…';
+    interviewSublabel.textContent = 'Please wait while we wrap up.';
+    audioBars.classList.add('paused');
+    micOrb.classList.add('muted');
+
+    try {
+      if (client) {
+        await client.stopCall();
+      }
+    } catch (err) {
+      console.error('Stop call error:', err);
+    }
+
+    // Fallback: if call_ended event doesn't fire
+    setTimeout(() => {
+      if (document.getElementById('interviewState').style.display !== 'none') {
+        showState('done');
+        client = null;
+      }
+    }, 2000);
+  });
+</script>
+
+</body>
+</html>
