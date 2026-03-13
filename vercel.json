@@ -2,7 +2,7 @@
   "cleanUrls": true,
   "rewrites": [
     { "source": "/",          "destination": "/hexaware-apply.html" },
-    { "source": "/interview", "destination": "/index.html" }
+    { "source": "/interview", "destination": "/interview.html" }
   ],
   "headers": [
     {
