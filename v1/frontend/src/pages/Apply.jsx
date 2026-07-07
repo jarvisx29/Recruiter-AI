@@ -413,7 +413,6 @@ export default function Apply() {
         const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
         streamRef.current = stream
-        if (videoRef.current) videoRef.current.srcObject = stream
         setVerifyStatus('ready')
       } catch {
         if (!cancelled) setVerifyStatus('cam_err')
@@ -475,6 +474,13 @@ export default function Apply() {
       setLoading(false)
     }
   }
+
+  // Assign stream to video element once it's mounted and stream is ready
+  useEffect(() => {
+    if (verifyStatus !== 'ready' || !streamRef.current || !videoRef.current) return
+    videoRef.current.srcObject = streamRef.current
+    videoRef.current.play().catch(() => {})
+  }, [verifyStatus])
 
   const handlePhotoFileUpload = (f) => {
     if (!f || !f.type.startsWith('image/')) return
@@ -736,16 +742,20 @@ export default function Apply() {
                     <div className="ap-verify-panel">
                       <div className="ap-verify-panel-label">Your Reference Photo</div>
                       {referencePhoto
-                        ? <img ref={refImgRef} src={referencePhoto} className="ap-verify-photo" alt="Reference" crossOrigin="anonymous" />
+                        ? <img ref={refImgRef} src={referencePhoto} className="ap-verify-photo" alt="Reference" />
                         : <div className="ap-verify-placeholder">No photo</div>
                       }
                     </div>
                     <div className="ap-verify-panel">
                       <div className="ap-verify-panel-label">Live Camera</div>
-                      {verifyStatus === 'loading' || verifyStatus === 'idle'
-                        ? <div className="ap-verify-placeholder"><div className="ap-btn-spin" style={{ width: 28, height: 28, borderWidth: 3 }} /><div style={{ marginTop: 8 }}>Starting camera...</div></div>
-                        : <video ref={videoRef} autoPlay muted playsInline className="ap-verify-video" />
-                      }
+                      {(verifyStatus === 'loading' || verifyStatus === 'idle') && (
+                        <div className="ap-verify-placeholder">
+                          <div className="ap-btn-spin" style={{ width: 28, height: 28, borderWidth: 3 }} />
+                          <div style={{ marginTop: 8 }}>Starting camera...</div>
+                        </div>
+                      )}
+                      <video ref={videoRef} autoPlay muted playsInline className="ap-verify-video"
+                        style={{ display: (verifyStatus === 'loading' || verifyStatus === 'idle') ? 'none' : 'block' }} />
                     </div>
                   </div>
 
