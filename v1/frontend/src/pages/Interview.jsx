@@ -303,32 +303,36 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
         if (faceVideoRef.current) faceVideoRef.current.srcObject = stream
         setCameraActive(true)
 
-        // Start 30-second checks
+        // Check every 2 seconds — near-instant detection
+        let checking = false
         checkIntervalRef.current = setInterval(async () => {
-          if (cancelled || !faceVideoRef.current || !refDescRef.current) return
+          if (cancelled || !faceVideoRef.current || !refDescRef.current || checking) return
+          checking = true
           try {
             const camDesc = await captureFromVideo(faceVideoRef.current)
             if (!camDesc) {
               setFaceWarning('No face detected — please remain visible')
-              setTimeout(() => setFaceWarning(null), 6000)
+              setTimeout(() => setFaceWarning(null), 4000)
+              checking = false
               return
             }
             const { matched } = compareDescriptors(refDescRef.current, camDesc)
             if (!matched) {
               warningCountRef.current += 1
               if (warningCountRef.current >= 2) {
-                // Flag the session and terminate
+                // Flag and terminate immediately
                 clearInterval(checkIntervalRef.current)
                 await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
                 setFlagged(true)
-                setTimeout(() => navigate(`/results?session=${sessionId}`), 5000)
+                setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
               } else {
                 setFaceWarning('Warning: Face does not match reference. Please face the camera.')
-                setTimeout(() => setFaceWarning(null), 8000)
+                setTimeout(() => setFaceWarning(null), 6000)
               }
             }
           } catch { /* silent — don't disrupt interview */ }
-        }, 30000)
+          checking = false
+        }, 2000)
       } catch { /* camera denied or models failed — skip silently */ }
     }
 

@@ -22,7 +22,7 @@ export async function loadFaceModels() {
   return true
 }
 
-const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.4 })
 
 export async function getDescriptor(source) {
   // source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
