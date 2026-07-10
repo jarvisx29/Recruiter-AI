@@ -7,7 +7,9 @@ const modelsReadyCallbacks = []
 
 export async function loadFaceModels() {
   if (modelsLoaded) return true
-  if (modelsLoading) return new Promise(res => modelsReadyCallbacks.push(res))
+  if (modelsLoading) {
+    return new Promise(res => modelsReadyCallbacks.push(res))
+  }
   modelsLoading = true
   await Promise.all([
     faceapi.nets.tinyFaceDetector.loadFromUri(MODEL_URL),
@@ -20,9 +22,10 @@ export async function loadFaceModels() {
   return true
 }
 
-const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.4 })
+const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
 
 export async function getDescriptor(source) {
+  // source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
   const result = await faceapi
     .detectSingleFace(source, DETECTOR_OPTS)
     .withFaceLandmarks(true)
@@ -30,15 +33,16 @@ export async function getDescriptor(source) {
   return result?.descriptor ?? null
 }
 
-export function compareDescriptors(d1, d2, threshold = 0.55) {
+export function compareDescriptors(d1, d2) {
   if (!d1 || !d2) return { matched: false, distance: 1 }
   const distance = faceapi.euclideanDistance(d1, d2)
-  return { matched: distance < threshold, distance: +distance.toFixed(3) }
+  return { matched: distance < 0.55, distance: +distance.toFixed(3) }
 }
 
-// Pass video element directly to face-api — avoids manual canvas overhead.
-// face-api reads the current frame internally at its inputSize (160px).
 export async function captureFromVideo(videoEl) {
-  if (!videoEl || !videoEl.videoWidth || !videoEl.videoHeight || videoEl.readyState < 2) return null
-  return getDescriptor(videoEl)
+  const canvas = document.createElement('canvas')
+  canvas.width = videoEl.videoWidth
+  canvas.height = videoEl.videoHeight
+  canvas.getContext('2d').drawImage(videoEl, 0, 0)
+  return getDescriptor(canvas)
 }

@@ -278,97 +278,64 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
     }
   }, [status])
 
-  // Face security: open webcam + load models IN PARALLEL, then run continuous loop
+  // Periodic face security check
   useEffect(() => {
     const refPhotoUrl = sessionStorage.getItem('referencePhoto')
-    if (!refPhotoUrl) return
+    if (!refPhotoUrl) return // no reference photo — skip checking
 
     let cancelled = false
-    let mismatchSince = null
 
     const init = async () => {
       try {
-        // Webcam and model-loading happen at the same time — no sequential blocking
-        const [stream, desc] = await Promise.all([
-          navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: 640, height: 480 } }),
-          (async () => {
-            await loadFaceModels() // likely already done from App.jsx preload
-            const img = new Image()
-            img.src = refPhotoUrl
-            await img.decode()
-            return getDescriptor(img) // also warms up WebGL shaders for subsequent inferences
-          })(),
-        ])
-
-        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
-        if (!desc) return // reference photo had no detectable face — skip monitoring
-
+        await loadFaceModels()
+        // Build reference descriptor from stored photo
+        const img = new Image()
+        img.src = refPhotoUrl
+        await img.decode()
+        const desc = await getDescriptor(img)
+        if (!desc || cancelled) return
         refDescRef.current = desc
-        faceStreamRef.current = stream
 
-        // Assign stream. Video element is always in DOM (never display:none) so frames keep decoding.
-        if (faceVideoRef.current) {
-          faceVideoRef.current.srcObject = stream
-          // Force play in case autoPlay was blocked
-          faceVideoRef.current.play().catch(() => {})
-        }
+        // Open webcam (video only, separate from audio)
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
+        if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
+        faceStreamRef.current = stream
+        if (faceVideoRef.current) faceVideoRef.current.srcObject = stream
         setCameraActive(true)
 
-        // Wait for the first video frame to be ready
-        await new Promise(resolve => {
-          if (faceVideoRef.current && faceVideoRef.current.readyState >= 2) { resolve(); return }
-          const onReady = () => { resolve(); faceVideoRef.current?.removeEventListener('loadeddata', onReady) }
-          faceVideoRef.current?.addEventListener('loadeddata', onReady)
-          setTimeout(resolve, 3000) // fallback
-        })
-
-        if (cancelled) return
-
-        // Continuous check loop — fires immediately after each inference finishes.
-        // Threshold 0.62: loose enough that same person at different angles always matches,
-        // tight enough that a completely different face is caught.
-        // Requires 3 distinct mismatch incidents to flag (not 2) to prevent false positives.
-        // "Incident" = first detection of non-matching face after a confirmed match.
-        // No face detected (null) does NOT reset the incident — only a confirmed match does.
-        const faceCheckLoop = async () => {
-          if (cancelled) return
+        // Start 30-second checks
+        checkIntervalRef.current = setInterval(async () => {
+          if (cancelled || !faceVideoRef.current || !refDescRef.current) return
           try {
-            const video = faceVideoRef.current
-            if (video && video.readyState >= 2 && refDescRef.current) {
-              const camDesc = await captureFromVideo(video)
-              if (camDesc) {
-                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.62)
-                if (matched) {
-                  mismatchSince = null // confirmed correct face — reset incident tracker
-                } else if (!mismatchSince) {
-                  // New incident: first detection of a different face
-                  mismatchSince = Date.now()
-                  warningCountRef.current += 1
-                  if (warningCountRef.current >= 3) {
-                    await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
-                    setFlagged(true)
-                    setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
-                    return // stop loop permanently
-                  }
-                  setFaceWarning('⚠️ Warning: Unrecognized face detected!')
-                  setTimeout(() => setFaceWarning(null), 6000)
-                }
-                // mismatchSince already set = sustained mismatch — don't double-count
-              }
-              // null camDesc = no face visible — keep mismatchSince unchanged (don't reset)
+            const camDesc = await captureFromVideo(faceVideoRef.current)
+            if (!camDesc) {
+              setFaceWarning('No face detected — please remain visible')
+              setTimeout(() => setFaceWarning(null), 6000)
+              return
             }
-          } catch { /* never crash the interview */ }
-          checkIntervalRef.current = setTimeout(faceCheckLoop, 100)
-        }
-
-        faceCheckLoop()
-      } catch { /* camera denied or models failed — skip security silently */ }
+            const { matched } = compareDescriptors(refDescRef.current, camDesc)
+            if (!matched) {
+              warningCountRef.current += 1
+              if (warningCountRef.current >= 2) {
+                // Flag the session and terminate
+                clearInterval(checkIntervalRef.current)
+                await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
+                setFlagged(true)
+                setTimeout(() => navigate(`/results?session=${sessionId}`), 5000)
+              } else {
+                setFaceWarning('Warning: Face does not match reference. Please face the camera.')
+                setTimeout(() => setFaceWarning(null), 8000)
+              }
+            }
+          } catch { /* silent — don't disrupt interview */ }
+        }, 30000)
+      } catch { /* camera denied or models failed — skip silently */ }
     }
 
     init()
     return () => {
       cancelled = true
-      clearTimeout(checkIntervalRef.current)
+      clearInterval(checkIntervalRef.current)
       faceStreamRef.current?.getTracks().forEach(t => t.stop())
       faceStreamRef.current = null
     }
@@ -403,11 +370,10 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
         {/* Face mismatch warning toast */}
         {faceWarning && <div className="iv-security-toast">{faceWarning}</div>}
 
-        {/* Webcam — always in DOM so browser keeps decoding frames even before cameraActive.
-            When inactive: 1x1px invisible but still receiving stream. */}
+        {/* Webcam for periodic face checks (visible corner preview) */}
         <video ref={faceVideoRef} autoPlay muted playsInline
           className={cameraActive ? 'iv-webcam-preview' : ''}
-          style={cameraActive ? {} : { position: 'fixed', width: 1, height: 1, opacity: 0, pointerEvents: 'none', bottom: 0, right: 0 }} />
+          style={cameraActive ? {} : { display: 'none' }} />
         {cameraActive && <div className="iv-face-badge" style={{ bottom: '0.8rem' }}>Security</div>}
 
         <nav className="iv-nav">
