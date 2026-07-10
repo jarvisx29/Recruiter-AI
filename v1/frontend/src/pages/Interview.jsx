@@ -303,43 +303,51 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
         if (faceVideoRef.current) faceVideoRef.current.srcObject = stream
         setCameraActive(true)
 
-        // Check every 2 seconds — near-instant detection
-        let checking = false
-        checkIntervalRef.current = setInterval(async () => {
-          if (cancelled || !faceVideoRef.current || !refDescRef.current || checking) return
-          checking = true
+        // Continuous face check loop — runs immediately after each detection finishes
+        // Uses 0.45 threshold (tighter than apply-step 0.55) for higher sensitivity
+        let mismatchSince = null // tracks when a mismatch incident started
+
+        const faceCheckLoop = async () => {
+          if (cancelled) return
           try {
-            const camDesc = await captureFromVideo(faceVideoRef.current)
-            if (!camDesc) {
-              setFaceWarning('No face detected — please remain visible')
-              setTimeout(() => setFaceWarning(null), 4000)
-              checking = false
-              return
-            }
-            const { matched } = compareDescriptors(refDescRef.current, camDesc)
-            if (!matched) {
-              warningCountRef.current += 1
-              if (warningCountRef.current >= 2) {
-                // Flag and terminate immediately
-                clearInterval(checkIntervalRef.current)
-                await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
-                setFlagged(true)
-                setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
+            if (faceVideoRef.current && refDescRef.current) {
+              const camDesc = await captureFromVideo(faceVideoRef.current)
+              if (!camDesc) {
+                // No face visible — not a mismatch incident, just alert once
+                mismatchSince = null
               } else {
-                setFaceWarning('Warning: Face does not match reference. Please face the camera.')
-                setTimeout(() => setFaceWarning(null), 6000)
+                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.45)
+                if (matched) {
+                  mismatchSince = null // face is back — reset incident
+                } else if (!mismatchSince) {
+                  // First detection of a different face — new incident
+                  mismatchSince = Date.now()
+                  warningCountRef.current += 1
+                  if (warningCountRef.current >= 2) {
+                    await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
+                    setFlagged(true)
+                    setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
+                    return // stop loop
+                  } else {
+                    setFaceWarning('⚠️ Warning: Unrecognized face detected!')
+                    setTimeout(() => setFaceWarning(null), 6000)
+                  }
+                }
+                // if mismatchSince is already set, sustained mismatch — don't double-count
               }
             }
           } catch { /* silent — don't disrupt interview */ }
-          checking = false
-        }, 2000)
+          checkIntervalRef.current = setTimeout(faceCheckLoop, 300)
+        }
+
+        faceCheckLoop()
       } catch { /* camera denied or models failed — skip silently */ }
     }
 
     init()
     return () => {
       cancelled = true
-      clearInterval(checkIntervalRef.current)
+      clearTimeout(checkIntervalRef.current)
       faceStreamRef.current?.getTracks().forEach(t => t.stop())
       faceStreamRef.current = null
     }

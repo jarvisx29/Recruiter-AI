@@ -33,10 +33,10 @@ export async function getDescriptor(source) {
   return result?.descriptor ?? null
 }
 
-export function compareDescriptors(d1, d2) {
+export function compareDescriptors(d1, d2, threshold = 0.55) {
   if (!d1 || !d2) return { matched: false, distance: 1 }
   const distance = faceapi.euclideanDistance(d1, d2)
-  return { matched: distance < 0.55, distance: +distance.toFixed(3) }
+  return { matched: distance < threshold, distance: +distance.toFixed(3) }
 }
 
 export async function captureFromVideo(videoEl) {
