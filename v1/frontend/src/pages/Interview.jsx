@@ -325,7 +325,11 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
         if (cancelled) return
 
         // Continuous check loop — fires immediately after each inference finishes.
-        // With WebGL warmed up, each inference takes ~100-300ms → detects in <1s.
+        // Threshold 0.62: loose enough that same person at different angles always matches,
+        // tight enough that a completely different face is caught.
+        // Requires 3 distinct mismatch incidents to flag (not 2) to prevent false positives.
+        // "Incident" = first detection of non-matching face after a confirmed match.
+        // No face detected (null) does NOT reset the incident — only a confirmed match does.
         const faceCheckLoop = async () => {
           if (cancelled) return
           try {
@@ -333,13 +337,14 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
             if (video && video.readyState >= 2 && refDescRef.current) {
               const camDesc = await captureFromVideo(video)
               if (camDesc) {
-                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.45)
+                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.62)
                 if (matched) {
-                  mismatchSince = null
+                  mismatchSince = null // confirmed correct face — reset incident tracker
                 } else if (!mismatchSince) {
+                  // New incident: first detection of a different face
                   mismatchSince = Date.now()
                   warningCountRef.current += 1
-                  if (warningCountRef.current >= 2) {
+                  if (warningCountRef.current >= 3) {
                     await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
                     setFlagged(true)
                     setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
@@ -348,10 +353,9 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
                   setFaceWarning('⚠️ Warning: Unrecognized face detected!')
                   setTimeout(() => setFaceWarning(null), 6000)
                 }
-                // mismatchSince already set = sustained mismatch, don't double-count
-              } else {
-                mismatchSince = null // no face visible, reset incident
+                // mismatchSince already set = sustained mismatch — don't double-count
               }
+              // null camDesc = no face visible — keep mismatchSince unchanged (don't reset)
             }
           } catch { /* never crash the interview */ }
           checkIntervalRef.current = setTimeout(faceCheckLoop, 100)
