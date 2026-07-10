@@ -22,10 +22,10 @@ export async function loadFaceModels() {
   return true
 }
 
-const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 224, scoreThreshold: 0.4 })
+// inputSize 160 is faster than 224 with no meaningful accuracy loss for recognition
+const DETECTOR_OPTS = new faceapi.TinyFaceDetectorOptions({ inputSize: 160, scoreThreshold: 0.4 })
 
 export async function getDescriptor(source) {
-  // source: HTMLImageElement | HTMLVideoElement | HTMLCanvasElement
   const result = await faceapi
     .detectSingleFace(source, DETECTOR_OPTS)
     .withFaceLandmarks(true)
@@ -33,16 +33,22 @@ export async function getDescriptor(source) {
   return result?.descriptor ?? null
 }
 
-export function compareDescriptors(d1, d2) {
+// threshold param lets callers choose strictness:
+// Apply verification uses default 0.55, Interview monitoring uses 0.6
+export function compareDescriptors(d1, d2, threshold = 0.55) {
   if (!d1 || !d2) return { matched: false, distance: 1 }
   const distance = faceapi.euclideanDistance(d1, d2)
-  return { matched: distance < 0.55, distance: +distance.toFixed(3) }
+  return { matched: distance < threshold, distance: +distance.toFixed(3) }
 }
 
 export async function captureFromVideo(videoEl) {
+  if (!videoEl || !videoEl.videoWidth || !videoEl.videoHeight || videoEl.readyState < 2) return null
+  // Resize to 320px wide before inference — reduces pixel data 4-8x vs full webcam resolution
+  const W = Math.min(videoEl.videoWidth, 320)
+  const H = Math.round(W * videoEl.videoHeight / videoEl.videoWidth)
   const canvas = document.createElement('canvas')
-  canvas.width = videoEl.videoWidth
-  canvas.height = videoEl.videoHeight
-  canvas.getContext('2d').drawImage(videoEl, 0, 0)
+  canvas.width = W
+  canvas.height = H
+  canvas.getContext('2d').drawImage(videoEl, 0, 0, W, H)
   return getDescriptor(canvas)
 }
