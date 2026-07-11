@@ -503,8 +503,12 @@ export default function Apply() {
       const { matched } = compareDescriptors(refDesc, camDesc)
       if (matched) {
         setVerifyStatus('ok')
-        // Store reference photo for interview periodic checks
+        // Store reference photo (fallback) + live webcam descriptor (primary)
+        // The webcam descriptor is what the person looks like RIGHT NOW on THIS camera —
+        // glasses or no glasses, whatever they're wearing. Interview monitoring uses this
+        // so it matches the exact same appearance, not the resume photo.
         sessionStorage.setItem('referencePhoto', referencePhoto)
+        sessionStorage.setItem('verifiedFaceDescriptor', JSON.stringify(Array.from(camDesc)))
         setTimeout(() => {
           streamRef.current?.getTracks().forEach(t => t.stop())
           navigate(`/interview?session=${sessionData.session_id}&name=${encodeURIComponent(sessionData.candidate)}&position=${encodeURIComponent(sessionData.position)}`)

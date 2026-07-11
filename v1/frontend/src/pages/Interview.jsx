@@ -289,20 +289,30 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
 
     const init = async () => {
       try {
-        // Open webcam and load models at the same time — no sequential blocking
+        // Open webcam and resolve reference descriptor at the same time
         const [stream, desc] = await Promise.all([
           navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }),
           (async () => {
             await loadFaceModels() // instant if App.jsx already preloaded them
+
+            // PRIMARY: use the live webcam descriptor stored during Apply verification.
+            // This is what the person looks like right now on this camera — glasses or not,
+            // any appearance — so monitoring is comparing webcam→webcam, not photo→webcam.
+            const stored = sessionStorage.getItem('verifiedFaceDescriptor')
+            if (stored) {
+              return new Float32Array(JSON.parse(stored))
+            }
+
+            // FALLBACK: compute from reference photo (older sessions without stored descriptor)
             const img = new Image()
             img.src = refPhotoUrl
             await img.decode()
-            return getDescriptor(img) // this also warms up WebGL for fast subsequent checks
+            return getDescriptor(img)
           })(),
         ])
 
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
-        if (!desc) { stream.getTracks().forEach(t => t.stop()); return } // no face in ref photo
+        if (!desc) { stream.getTracks().forEach(t => t.stop()); return }
 
         refDescRef.current = desc
         faceStreamRef.current = stream
@@ -335,7 +345,7 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
               const camDesc = await captureFromVideo(video)
               if (camDesc) {
                 // A real face was found — check if it's the right person
-                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.68)
+                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.6)
                 if (matched) {
                   consecutiveMismatches = 0 // confirmed correct person, reset streak
                 } else {
