@@ -329,7 +329,7 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
                   consecutiveMismatches = 0
                 } else {
                   consecutiveMismatches++
-                  if (consecutiveMismatches >= 3) {
+                  if (consecutiveMismatches >= 2) {
                     consecutiveMismatches = 0
                     warningEventCount++
                     if (warningEventCount >= 2) {
@@ -345,7 +345,7 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
               }
             }
           } catch { /* never crash the interview */ }
-          checkIntervalRef.current = setTimeout(faceCheckLoop, 2000)
+          checkIntervalRef.current = setTimeout(faceCheckLoop, 1000)
         }
 
         faceCheckLoop()
