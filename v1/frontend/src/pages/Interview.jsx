@@ -335,7 +335,7 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
               const camDesc = await captureFromVideo(video)
               if (camDesc) {
                 // A real face was found — check if it's the right person
-                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.6)
+                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.68)
                 if (matched) {
                   consecutiveMismatches = 0 // confirmed correct person, reset streak
                 } else {
