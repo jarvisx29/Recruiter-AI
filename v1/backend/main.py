@@ -1,15 +1,29 @@
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
-from fastapi.middleware.cors import CORSMiddleware
+import asyncio
 import json
 import uuid
 import os
 import httpx
 
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
+
 from interview_engine import InterviewEngine
 from resume_parser import ResumeParser
 import deepgram_interview
+from face_checker import get_embedding, compare_embeddings, preload as preload_face
+
+
+class ImagePayload(BaseModel):
+    image: str
+
 
 app = FastAPI(title="AI Recruiter v1")
+
+
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(preload_face())
 
 app.add_middleware(
     CORSMiddleware,
@@ -264,6 +278,32 @@ async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
         pass
     except Exception:
         pass
+
+
+@app.post("/api/store-face/{session_id}")
+async def store_face(session_id: str, payload: ImagePayload):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    embedding, error = await get_embedding(payload.image)
+    if error or embedding is None:
+        raise HTTPException(status_code=400, detail=error or "no_face")
+    sessions[session_id].face_embedding = embedding
+    return {"status": "stored"}
+
+
+@app.post("/api/check-face/{session_id}")
+async def check_face(session_id: str, payload: ImagePayload):
+    if session_id not in sessions:
+        raise HTTPException(status_code=404, detail="Session not found")
+    engine = sessions[session_id]
+    if engine.face_embedding is None:
+        return {"matched": True, "similarity": 1.0, "no_reference": True}
+    embedding, error = await get_embedding(payload.image)
+    if error == "no_face":
+        return {"matched": None, "no_face": True}
+    if error or embedding is None:
+        return {"matched": True, "no_face": True}
+    return compare_embeddings(engine.face_embedding, embedding)
 
 
 @app.post("/api/flag/{session_id}")

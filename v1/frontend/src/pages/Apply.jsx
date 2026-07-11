@@ -489,6 +489,15 @@ export default function Apply() {
     reader.readAsDataURL(f)
   }
 
+  const captureFrameBase64 = (videoEl) => {
+    if (!videoEl || !videoEl.videoWidth) return null
+    const canvas = document.createElement('canvas')
+    canvas.width = Math.min(videoEl.videoWidth, 640)
+    canvas.height = Math.round(canvas.width * videoEl.videoHeight / videoEl.videoWidth)
+    canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height)
+    return canvas.toDataURL('image/jpeg', 0.8)
+  }
+
   const runFaceCheck = async () => {
     if (!videoRef.current || !referencePhoto) return
     setVerifyStatus('checking')
@@ -503,12 +512,16 @@ export default function Apply() {
       const { matched } = compareDescriptors(refDesc, camDesc)
       if (matched) {
         setVerifyStatus('ok')
-        // Store reference photo (fallback) + live webcam descriptor (primary)
-        // The webcam descriptor is what the person looks like RIGHT NOW on THIS camera —
-        // glasses or no glasses, whatever they're wearing. Interview monitoring uses this
-        // so it matches the exact same appearance, not the resume photo.
         sessionStorage.setItem('referencePhoto', referencePhoto)
-        sessionStorage.setItem('verifiedFaceDescriptor', JSON.stringify(Array.from(camDesc)))
+        // Store webcam frame on backend for InsightFace monitoring during interview
+        const frameB64 = captureFrameBase64(videoRef.current)
+        if (frameB64) {
+          fetch(`${BACKEND}/api/store-face/${sessionData.session_id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ image: frameB64 }),
+          }).catch(() => {})
+        }
         setTimeout(() => {
           streamRef.current?.getTracks().forEach(t => t.stop())
           navigate(`/interview?session=${sessionData.session_id}&name=${encodeURIComponent(sessionData.candidate)}&position=${encodeURIComponent(sessionData.position)}`)

@@ -2,7 +2,6 @@ import { useEffect, useRef, useState } from 'react'
 import { useSearchParams, useNavigate } from 'react-router-dom'
 import { useInterview } from '../hooks/useInterview'
 import { useDeepgramInterview } from '../hooks/useDeepgramInterview'
-import { loadFaceModels, getDescriptor, captureFromVideo, compareDescriptors } from '../hooks/useWebcamSecurity'
 import { BACKEND } from '../config'
 
 const styles = `
@@ -256,8 +255,6 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
   const transcriptRef = useRef(null)
   const faceVideoRef = useRef(null)
   const faceStreamRef = useRef(null)
-  const refDescRef = useRef(null)
-  const warningCountRef = useRef(0)
   const checkIntervalRef = useRef(null)
   const [faceWarning, setFaceWarning] = useState(null) // toast text or null
   const [flagged, setFlagged] = useState(false)
@@ -278,43 +275,27 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
     }
   }, [status])
 
-  // Face security — continuous loop, detects wrong face within ~2-3 seconds
+  // Face security — backend InsightFace (ArcFace buffalo_sc)
+  // Every 2s: capture webcam frame → POST to /api/check-face → handle result
+  // 3 consecutive mismatches = 1 warning event; 2 events = flag + end
   useEffect(() => {
-    const refPhotoUrl = sessionStorage.getItem('referencePhoto')
-    if (!refPhotoUrl) return
-
     let cancelled = false
-    let consecutiveMismatches = 0 // how many checks IN A ROW showed a different face
-    let warningEventCount = 0     // how many warning events have fired (1=warned, 2=flag)
+    let consecutiveMismatches = 0
+    let warningEventCount = 0
+
+    const captureBase64 = (videoEl) => {
+      if (!videoEl || !videoEl.videoWidth || videoEl.readyState < 2) return null
+      const canvas = document.createElement('canvas')
+      canvas.width = Math.min(videoEl.videoWidth, 640)
+      canvas.height = Math.round(canvas.width * videoEl.videoHeight / videoEl.videoWidth)
+      canvas.getContext('2d').drawImage(videoEl, 0, 0, canvas.width, canvas.height)
+      return canvas.toDataURL('image/jpeg', 0.8)
+    }
 
     const init = async () => {
       try {
-        // Open webcam and resolve reference descriptor at the same time
-        const [stream, desc] = await Promise.all([
-          navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } }),
-          (async () => {
-            await loadFaceModels() // instant if App.jsx already preloaded them
-
-            // PRIMARY: use the live webcam descriptor stored during Apply verification.
-            // This is what the person looks like right now on this camera — glasses or not,
-            // any appearance — so monitoring is comparing webcam→webcam, not photo→webcam.
-            const stored = sessionStorage.getItem('verifiedFaceDescriptor')
-            if (stored) {
-              return new Float32Array(JSON.parse(stored))
-            }
-
-            // FALLBACK: compute from reference photo (older sessions without stored descriptor)
-            const img = new Image()
-            img.src = refPhotoUrl
-            await img.decode()
-            return getDescriptor(img)
-          })(),
-        ])
-
+        const stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user' } })
         if (cancelled) { stream.getTracks().forEach(t => t.stop()); return }
-        if (!desc) { stream.getTracks().forEach(t => t.stop()); return }
-
-        refDescRef.current = desc
         faceStreamRef.current = stream
         if (faceVideoRef.current) {
           faceVideoRef.current.srcObject = stream
@@ -322,59 +303,53 @@ function InterviewUI({ sessionId, name, position, connect, endCall, status, tran
         }
         setCameraActive(true)
 
-        // Wait for first video frame before starting checks
         await new Promise(resolve => {
           if (faceVideoRef.current?.readyState >= 2) { resolve(); return }
           const h = () => { resolve(); faceVideoRef.current?.removeEventListener('loadeddata', h) }
           faceVideoRef.current?.addEventListener('loadeddata', h)
-          setTimeout(resolve, 3000) // fallback — don't block forever
+          setTimeout(resolve, 3000)
         })
         if (cancelled) return
 
-        // Continuous loop: fires immediately after each inference completes.
-        // Threshold 0.6 = face-api.js standard. Same person always scores < 0.55
-        // even at different angles; a different person scores > 0.65.
-        // Requires 3 consecutive mismatches before counting as an "event"
-        // — prevents single-frame false positives from head turns / blinks.
-        // Objects (hands, phones) return null from captureFromVideo and are ignored.
         const faceCheckLoop = async () => {
           if (cancelled) return
           try {
-            const video = faceVideoRef.current
-            if (video && video.readyState >= 2 && refDescRef.current) {
-              const camDesc = await captureFromVideo(video)
-              if (camDesc) {
-                // A real face was found — check if it's the right person
-                const { matched } = compareDescriptors(refDescRef.current, camDesc, 0.6)
-                if (matched) {
-                  consecutiveMismatches = 0 // confirmed correct person, reset streak
+            const imageB64 = captureBase64(faceVideoRef.current)
+            if (imageB64) {
+              const res = await fetch(`${BACKEND}/api/check-face/${sessionId}`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ image: imageB64 }),
+              })
+              if (res.ok) {
+                const data = await res.json()
+                if (data.no_face || data.no_reference) {
+                  // no face in frame or no reference stored — skip, don't count
+                } else if (data.matched) {
+                  consecutiveMismatches = 0
                 } else {
                   consecutiveMismatches++
                   if (consecutiveMismatches >= 3) {
-                    // 3 consecutive checks all show a different face — this is a real event
                     consecutiveMismatches = 0
                     warningEventCount++
                     if (warningEventCount >= 2) {
-                      // Second event → flag and end immediately
                       await fetch(`${BACKEND}/api/flag/${sessionId}`, { method: 'POST' }).catch(() => {})
                       setFlagged(true)
                       setTimeout(() => navigate(`/results?session=${sessionId}`), 1500)
-                      return // stop loop
+                      return
                     }
-                    // First event → warning
                     setFaceWarning('⚠️ Warning: Unrecognized face detected!')
                     setTimeout(() => setFaceWarning(null), 8000)
                   }
                 }
               }
-              // null camDesc = no face / object in frame — don't count, don't reset
             }
           } catch { /* never crash the interview */ }
-          checkIntervalRef.current = setTimeout(faceCheckLoop, 500)
+          checkIntervalRef.current = setTimeout(faceCheckLoop, 2000)
         }
 
         faceCheckLoop()
-      } catch { /* camera denied or models failed — skip security silently */ }
+      } catch { /* camera denied — skip security silently */ }
     }
 
     init()
