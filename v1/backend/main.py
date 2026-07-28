@@ -93,7 +93,7 @@ async def startup_event():
 async def health():
     return {
         "status": "ok",
-        "version": "1.3",
+        "version": "1.4",
         "active_sessions": len(sessions),
         "interviews_saved": len(completed_interviews),
         "supabase_connected": bool(SUPABASE_URL and SUPABASE_KEY),
@@ -325,15 +325,17 @@ async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
     except Exception:
         pass
     engine = sessions.get(session_id)
-    if engine and engine.is_interview_done and not engine._saved_to_admin:
-        engine._saved_to_admin = True
-        entry = {
-            **engine.get_final_results(),
-            "session_id": session_id,
-            "completed_at": datetime.now().isoformat(),
-        }
-        completed_interviews.append(entry)
-        asyncio.create_task(_supabase_insert(entry))
+    if engine and not engine._saved_to_admin:
+        has_data = len(engine.conversation_history) > 1 or engine.is_flagged
+        if has_data:
+            engine._saved_to_admin = True
+            entry = {
+                **engine.get_final_results(),
+                "session_id": session_id,
+                "completed_at": datetime.now().isoformat(),
+            }
+            completed_interviews.append(entry)
+            asyncio.create_task(_supabase_insert(entry))
 
 
 @app.post("/api/store-face/{session_id}")
@@ -376,7 +378,8 @@ async def get_results(session_id: str):
         raise HTTPException(status_code=404, detail="Session not found or already cleaned up")
     engine = sessions[session_id]
     results = engine.get_final_results()
-    if (engine.is_interview_done or engine.is_flagged) and not engine._saved_to_admin:
+    has_data = len(engine.conversation_history) > 1 or engine.is_flagged
+    if has_data and not engine._saved_to_admin:
         engine._saved_to_admin = True
         entry = {
             **results,
