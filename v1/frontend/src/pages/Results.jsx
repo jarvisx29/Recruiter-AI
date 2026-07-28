@@ -201,21 +201,7 @@ export default function Results() {
     async function tryFetch() {
       try {
         const r = await fetch(`${BACKEND}/api/results/${sessionId}`)
-        if (r.ok) {
-          const data = await r.json()
-          setResults(data)
-          // Save to localStorage so admin dashboard can display it
-          try {
-            const key = 'srm_interviews'
-            const existing = JSON.parse(localStorage.getItem(key) || '[]')
-            const alreadySaved = existing.some(e => e.session_id === sessionId)
-            if (!alreadySaved) {
-              existing.unshift({ ...data, session_id: sessionId, completed_at: new Date().toISOString() })
-              localStorage.setItem(key, JSON.stringify(existing.slice(0, 200)))
-            }
-          } catch {}
-          return
-        }
+        if (r.ok) { setResults(await r.json()); return }
       } catch {}
       attempts++
       if (attempts < MAX) setTimeout(tryFetch, 1000)

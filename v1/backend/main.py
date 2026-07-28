@@ -3,8 +3,9 @@ import json
 import uuid
 import os
 import httpx
+from datetime import datetime
 
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, UploadFile, File, Form, HTTPException, Header
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
@@ -33,10 +34,12 @@ app.add_middleware(
 )
 
 sessions: dict[str, InterviewEngine] = {}
+completed_interviews: list = []
 resume_parser = ResumeParser()
 
 RETELL_API_KEY = os.getenv("RETELL_API_KEY")
 RETELL_AGENT_ID = os.getenv("RETELL_AGENT_ID")
+ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "srm@admin2026")
 
 
 @app.get("/health")
@@ -321,4 +324,19 @@ async def get_results(session_id: str):
     if session_id not in sessions:
         raise HTTPException(status_code=404, detail="Session not found or already cleaned up")
     engine = sessions[session_id]
-    return engine.get_final_results()
+    results = engine.get_final_results()
+    if (engine.is_interview_done or engine.is_flagged) and not engine._saved_to_admin:
+        engine._saved_to_admin = True
+        completed_interviews.append({
+            **results,
+            "session_id": session_id,
+            "completed_at": datetime.now().isoformat(),
+        })
+    return results
+
+
+@app.get("/api/admin/interviews")
+async def admin_interviews(authorization: str = Header(default="")):
+    if authorization != f"Bearer {ADMIN_PASSWORD}":
+        raise HTTPException(status_code=401, detail="Unauthorized")
+    return {"interviews": list(reversed(completed_interviews)), "total": len(completed_interviews)}

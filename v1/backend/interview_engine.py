@@ -28,6 +28,7 @@ class InterviewEngine:
         self.is_interview_done = False
         self.is_flagged = False
         self.face_embedding = None  # InsightFace embedding stored at Apply verification
+        self._saved_to_admin = False
 
     def _build_resume_summary(self, r: dict) -> str:
         parts = []

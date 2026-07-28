@@ -1,8 +1,6 @@
 import { useState, useEffect } from 'react'
 import { useNavigate } from 'react-router-dom'
-
-const ADMIN_PASSWORD = import.meta.env.VITE_ADMIN_PASSWORD || 'srm2026'
-const LS_KEY = 'srm_interviews'
+import { BACKEND } from '../config'
 
 const styles = `
   @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800;900&display=swap');
@@ -81,6 +79,13 @@ const styles = `
   }
   .ad-login-btn:hover:not(:disabled) { opacity: 0.9; }
   .ad-login-btn:disabled { opacity: 0.6; cursor: not-allowed; }
+  .ad-spin {
+    width: 16px; height: 16px;
+    border: 2px solid rgba(255,255,255,0.4);
+    border-top-color: #fff; border-radius: 50%;
+    animation: ad-spin 0.7s linear infinite;
+  }
+  @keyframes ad-spin { to { transform: rotate(360deg); } }
   .ad-login-error {
     background: rgba(198,40,40,0.07); border: 1px solid rgba(198,40,40,0.25);
     border-radius: 8px; padding: 10px 14px;
@@ -97,15 +102,6 @@ const styles = `
   .ad-page-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 1rem; }
   .ad-page-eyebrow { font-size: 0.68rem; font-weight: 800; color: #1565c0; text-transform: uppercase; letter-spacing: 1px; }
   .ad-page-name { font-size: 1.5rem; font-weight: 900; color: #1a237e; margin-top: 2px; }
-
-  .ad-head-actions { display: flex; gap: 8px; }
-  .ad-clear-btn {
-    height: 40px; padding: 0 16px;
-    background: #fff; border: 1.5px solid rgba(198,40,40,0.3); border-radius: 10px;
-    font-size: 0.8rem; font-weight: 700; color: #c62828;
-    cursor: pointer; font-family: inherit; transition: all 0.2s;
-  }
-  .ad-clear-btn:hover { background: rgba(198,40,40,0.05); }
   .ad-refresh-btn {
     height: 40px; padding: 0 18px;
     background: #fff; border: 1.5px solid #d8e2ef; border-radius: 10px;
@@ -114,6 +110,7 @@ const styles = `
     transition: all 0.2s; font-family: inherit;
   }
   .ad-refresh-btn:hover { border-color: #1565c0; background: rgba(21,101,192,0.04); }
+  .ad-refresh-btn:disabled { opacity: 0.5; cursor: not-allowed; }
 
   /* STATS */
   .ad-stats { display: flex; gap: 1rem; flex-wrap: wrap; }
@@ -136,6 +133,15 @@ const styles = `
   .ad-empty-title { font-size: 1rem; font-weight: 700; color: #1a2332; }
   .ad-empty-sub { font-size: 0.85rem; color: #6b7a8d; max-width: 340px; line-height: 1.5; }
 
+  /* LOADING */
+  .ad-loading-wrap { flex: 1; display: flex; align-items: center; justify-content: center; flex-direction: column; gap: 1rem; }
+  .ad-loading-ring {
+    width: 40px; height: 40px;
+    border: 3px solid rgba(21,101,192,0.15);
+    border-top-color: #1565c0; border-radius: 50%;
+    animation: ad-spin 0.9s linear infinite;
+  }
+
   /* CARDS */
   .ad-cards { display: flex; flex-direction: column; gap: 1rem; }
   .ad-card { background: #fff; border: 1px solid #d8e2ef; border-radius: 14px; overflow: hidden; box-shadow: 0 2px 10px rgba(21,101,192,0.05); }
@@ -157,7 +163,7 @@ const styles = `
     font-size: 0.72rem; font-weight: 700;
     text-transform: uppercase; letter-spacing: 0.3px; margin-top: 6px;
   }
-  .ad-card-right { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
+  .ad-card-right { display: flex; align-items: flex-start; gap: 0.75rem; flex-shrink: 0; flex-wrap: wrap; justify-content: flex-end; }
   .ad-score-box { text-align: center; min-width: 48px; }
   .ad-score-num { font-size: 1.6rem; font-weight: 900; line-height: 1; }
   .ad-score-denom { font-size: 0.7rem; color: #6b7a8d; font-weight: 600; }
@@ -169,7 +175,6 @@ const styles = `
     border: 1px solid;
   }
   .ad-flag-icon { font-size: 1.2rem; flex-shrink: 0; }
-  .ad-expand-col { display: flex; flex-direction: column; align-items: flex-end; gap: 4px; }
   .ad-expand-chevron { font-size: 0.75rem; color: #9ba8b5; font-weight: 700; transition: transform 0.2s; }
   .ad-expand-chevron.open { transform: rotate(180deg); }
   .ad-card-time { font-size: 0.7rem; color: #9ba8b5; font-weight: 500; white-space: nowrap; }
@@ -225,49 +230,71 @@ function formatTime(iso) {
   })
 }
 
-function loadFromStorage() {
-  try {
-    return JSON.parse(localStorage.getItem(LS_KEY) || '[]')
-  } catch {
-    return []
-  }
-}
-
 export default function Admin() {
   const navigate = useNavigate()
   const [password, setPassword] = useState('')
-  const [authed, setAuthed] = useState(() => sessionStorage.getItem('admin_authed') === '1')
+  const [authed, setAuthed] = useState(false)
   const [authError, setAuthError] = useState('')
+  const [logging, setLogging] = useState(false)
   const [interviews, setInterviews] = useState([])
+  const [fetching, setFetching] = useState(false)
   const [expandedId, setExpandedId] = useState(null)
 
   useEffect(() => {
-    if (authed) setInterviews(loadFromStorage())
-  }, [authed])
+    const token = sessionStorage.getItem('admin_token')
+    if (token) fetchInterviews(token, true)
+  }, [])
 
-  const handleLogin = (e) => {
-    e?.preventDefault()
-    if (!password.trim()) return
-    if (password === ADMIN_PASSWORD) {
-      sessionStorage.setItem('admin_authed', '1')
-      setAuthed(true)
-      setAuthError('')
-    } else {
-      setAuthError('Incorrect password. Please try again.')
-    }
+  const fetchInterviews = async (token, silent = false) => {
+    if (!silent) setFetching(true)
+    try {
+      const res = await fetch(`${BACKEND}/api/admin/interviews`, {
+        headers: { Authorization: `Bearer ${token}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        setInterviews(data.interviews || [])
+        setAuthed(true)
+      } else {
+        sessionStorage.removeItem('admin_token')
+        setAuthed(false)
+      }
+    } catch {}
+    if (!silent) setFetching(false)
   }
 
-  const refresh = () => setInterviews(loadFromStorage())
+  const handleLogin = async (e) => {
+    e?.preventDefault()
+    if (!password.trim()) return
+    setLogging(true)
+    setAuthError('')
+    try {
+      const res = await fetch(`${BACKEND}/api/admin/interviews`, {
+        headers: { Authorization: `Bearer ${password}` },
+      })
+      if (res.ok) {
+        const data = await res.json()
+        sessionStorage.setItem('admin_token', password)
+        setInterviews(data.interviews || [])
+        setAuthed(true)
+      } else {
+        setAuthError('Incorrect password. Please try again.')
+      }
+    } catch {
+      setAuthError('Cannot connect to server.')
+    }
+    setLogging(false)
+  }
 
-  const clearData = () => {
-    if (!window.confirm('Clear all stored interview records from this browser? This cannot be undone.')) return
-    localStorage.removeItem(LS_KEY)
-    setInterviews([])
+  const refresh = () => {
+    const token = sessionStorage.getItem('admin_token')
+    if (token) fetchInterviews(token)
   }
 
   const logout = () => {
-    sessionStorage.removeItem('admin_authed')
+    sessionStorage.removeItem('admin_token')
     setAuthed(false)
+    setInterviews([])
     setPassword('')
   }
 
@@ -319,8 +346,8 @@ export default function Admin() {
                   autoFocus
                 />
                 {authError && <div className="ad-login-error">{authError}</div>}
-                <button className="ad-login-btn" type="submit" disabled={!password.trim()}>
-                  Access Dashboard →
+                <button className="ad-login-btn" type="submit" disabled={logging || !password.trim()}>
+                  {logging ? <><div className="ad-spin" /> Verifying...</> : 'Access Dashboard →'}
                 </button>
               </form>
             </div>
@@ -331,18 +358,16 @@ export default function Admin() {
         {authed && (
           <div className="ad-main">
 
-            {/* Page heading */}
             <div className="ad-page-head">
               <div>
                 <div className="ad-page-eyebrow">Interview Dashboard</div>
                 <div className="ad-page-name">Candidate Reports</div>
               </div>
-              <div className="ad-head-actions">
-                {interviews.length > 0 && (
-                  <button className="ad-clear-btn" onClick={clearData}>Clear All</button>
-                )}
-                <button className="ad-refresh-btn" onClick={refresh}>↻ Refresh</button>
-              </div>
+              <button className="ad-refresh-btn" onClick={refresh} disabled={fetching}>
+                {fetching
+                  ? <><div className="ad-spin" style={{ borderTopColor: '#1565c0', borderColor: 'rgba(21,101,192,0.2)', width: 13, height: 13 }} /> Refreshing...</>
+                  : '↻ Refresh'}
+              </button>
             </div>
 
             {/* Stats */}
@@ -369,12 +394,20 @@ export default function Admin() {
               </div>
             </div>
 
+            {/* Loading */}
+            {fetching && interviews.length === 0 && (
+              <div className="ad-loading-wrap">
+                <div className="ad-loading-ring" />
+                <div style={{ color: '#6b7a8d', fontSize: '0.85rem' }}>Loading results...</div>
+              </div>
+            )}
+
             {/* Empty */}
-            {interviews.length === 0 && (
+            {!fetching && interviews.length === 0 && (
               <div className="ad-empty">
                 <div className="ad-empty-icon">📋</div>
                 <div className="ad-empty-title">No interviews completed yet</div>
-                <div className="ad-empty-sub">Reports appear here automatically once students complete their interview on this device. Click Refresh to check.</div>
+                <div className="ad-empty-sub">Reports appear here automatically once students finish their interview. Click Refresh to check.</div>
               </div>
             )}
 
@@ -383,9 +416,9 @@ export default function Admin() {
               <div className="ad-cards">
                 {interviews.map((iv, idx) => {
                   const rec = REC_STYLE[iv.recommendation] || REC_STYLE.Hold
-                  const isOpen = expandedId === (iv.session_id || idx)
-                  const topicEntries = Object.entries(iv.topic_scores || {})
                   const cardKey = iv.session_id || idx
+                  const isOpen = expandedId === cardKey
+                  const topicEntries = Object.entries(iv.topic_scores || {})
 
                   return (
                     <div className="ad-card" key={cardKey}>
@@ -412,16 +445,29 @@ export default function Admin() {
                             <div className="ad-score-denom">/10</div>
                           </div>
 
-                          <div className="ad-rec-badge" style={rec}>
-                            {iv.recommendation}
-                          </div>
+                          <div className="ad-rec-badge" style={rec}>{iv.recommendation}</div>
 
-                          {iv.is_flagged && (
-                            <div className="ad-flag-icon" title="Session flagged — proxy attempt suspected">🚨</div>
-                          )}
-
-                          <div className="ad-expand-col">
-                            <div className={`ad-expand-chevron${isOpen ? ' open' : ''}`}>▼</div>
+                          {/* Flagged badge + chevron grouped tightly */}
+                          <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-end', gap: '4px' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                              {iv.is_flagged && (
+                                <div style={{ display: 'flex', alignItems: 'center', gap: '5px' }}>
+                                  <span className="ad-flag-icon">🚨</span>
+                                  <span style={{
+                                    background: 'rgba(183,28,28,0.1)',
+                                    border: '1px solid rgba(183,28,28,0.35)',
+                                    color: '#b71c1c',
+                                    borderRadius: '6px',
+                                    padding: '3px 8px',
+                                    fontSize: '0.7rem',
+                                    fontWeight: 800,
+                                    textTransform: 'uppercase',
+                                    letterSpacing: '0.5px',
+                                  }}>Flagged</span>
+                                </div>
+                              )}
+                              <div className={`ad-expand-chevron${isOpen ? ' open' : ''}`}>▼</div>
+                            </div>
                             <div className="ad-card-time">{formatTime(iv.completed_at)}</div>
                           </div>
                         </div>
