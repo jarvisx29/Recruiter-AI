@@ -283,6 +283,15 @@ async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
         pass
     except Exception:
         pass
+    # Save to admin list as soon as the WS closes after a completed interview
+    engine = sessions.get(session_id)
+    if engine and engine.is_interview_done and not engine._saved_to_admin:
+        engine._saved_to_admin = True
+        completed_interviews.append({
+            **engine.get_final_results(),
+            "session_id": session_id,
+            "completed_at": datetime.now().isoformat(),
+        })
 
 
 @app.post("/api/store-face/{session_id}")
