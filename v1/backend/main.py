@@ -46,8 +46,9 @@ ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "srm@admin2026")
 async def health():
     return {
         "status": "ok",
-        "version": "1.0",
+        "version": "1.1",
         "active_sessions": len(sessions),
+        "interviews_saved": len(completed_interviews),
         "deepgram_key_set": bool(os.getenv("DEEPGRAM_API_KEY")),
         "retell_key_set": bool(RETELL_API_KEY),
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
