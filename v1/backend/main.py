@@ -21,11 +21,6 @@ class ImagePayload(BaseModel):
 
 app = FastAPI(title="AI Recruiter v1")
 
-
-@app.on_event("startup")
-async def startup_event():
-    asyncio.create_task(preload_face())
-
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
@@ -34,43 +29,74 @@ app.add_middleware(
 )
 
 sessions: dict[str, InterviewEngine] = {}
+completed_interviews: list = []
 resume_parser = ResumeParser()
 
 RETELL_API_KEY = os.getenv("RETELL_API_KEY")
 RETELL_AGENT_ID = os.getenv("RETELL_AGENT_ID")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "srm@admin2026")
+SUPABASE_URL = os.getenv("SUPABASE_URL", "")
+SUPABASE_KEY = os.getenv("SUPABASE_KEY", "")
 
-INTERVIEWS_FILE = "/app/interviews.json"
+
+def _sb_headers():
+    return {
+        "apikey": SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type": "application/json",
+        "Prefer": "return=minimal",
+    }
 
 
-def _load_interviews() -> list:
+async def _supabase_insert(entry: dict):
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
     try:
-        if os.path.exists(INTERVIEWS_FILE):
-            with open(INTERVIEWS_FILE) as f:
-                return json.load(f)
+        async with httpx.AsyncClient(timeout=10) as client:
+            await client.post(
+                f"{SUPABASE_URL}/rest/v1/interviews",
+                headers=_sb_headers(),
+                json={"data": entry},
+            )
+    except Exception:
+        pass
+
+
+async def _supabase_load() -> list:
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return []
+    try:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.get(
+                f"{SUPABASE_URL}/rest/v1/interviews",
+                headers={
+                    "apikey": SUPABASE_KEY,
+                    "Authorization": f"Bearer {SUPABASE_KEY}",
+                },
+                params={"select": "data", "order": "created_at.asc"},
+            )
+            if r.status_code == 200:
+                return [row["data"] for row in r.json()]
     except Exception:
         pass
     return []
 
 
-def _save_interviews(interviews: list) -> None:
-    try:
-        with open(INTERVIEWS_FILE, "w") as f:
-            json.dump(interviews, f)
-    except Exception:
-        pass
-
-
-completed_interviews: list = _load_interviews()
+@app.on_event("startup")
+async def startup_event():
+    asyncio.create_task(preload_face())
+    loaded = await _supabase_load()
+    completed_interviews.extend(loaded)
 
 
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
-        "version": "1.2",
+        "version": "1.3",
         "active_sessions": len(sessions),
         "interviews_saved": len(completed_interviews),
+        "supabase_connected": bool(SUPABASE_URL and SUPABASE_KEY),
         "deepgram_key_set": bool(os.getenv("DEEPGRAM_API_KEY")),
         "retell_key_set": bool(RETELL_API_KEY),
         "openai_key_set": bool(os.getenv("OPENAI_API_KEY")),
@@ -194,13 +220,9 @@ async def retell_llm_websocket(websocket: WebSocket, call_id: str):
     last_response_text = ""
 
     try:
-        # Step 1: send config — request call_details so we get session_id
         await websocket.send_json({
             "response_type": "config",
-            "config": {
-                "auto_reconnect": True,
-                "call_details": True
-            }
+            "config": {"auto_reconnect": True, "call_details": True}
         })
 
         while True:
@@ -212,7 +234,6 @@ async def retell_llm_websocket(websocket: WebSocket, call_id: str):
                 session_id = metadata.get("session_id")
                 if session_id and session_id in sessions:
                     engine = sessions[session_id]
-                    # Send opening proactively as the begin message
                     opening = await engine.get_opening()
                     opening_sent = True
                     last_response_text = opening
@@ -245,7 +266,6 @@ async def retell_llm_websocket(websocket: WebSocket, call_id: str):
                 user_messages = [t for t in transcript if t.get("role") == "user"]
 
                 if not opening_sent:
-                    # Fallback if call_details never arrived
                     opening = await engine.get_opening()
                     opening_sent = True
                     last_response_text = opening
@@ -278,7 +298,6 @@ async def retell_llm_websocket(websocket: WebSocket, call_id: str):
                         break
 
                 else:
-                    # Reminder — resend last response
                     await websocket.send_json({
                         "response_type": "response",
                         "response_id": response_id,
@@ -294,7 +313,6 @@ async def retell_llm_websocket(websocket: WebSocket, call_id: str):
 
 @app.websocket("/ws/deepgram/{session_id}")
 async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
-    """Deepgram STT + OpenAI TTS interview pipeline (cheaper alternative to Retell)."""
     await websocket.accept()
     if session_id not in sessions:
         await websocket.send_json({"type": "error", "message": "Session not found."})
@@ -306,16 +324,16 @@ async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
         pass
     except Exception:
         pass
-    # Save to admin list as soon as the WS closes after a completed interview
     engine = sessions.get(session_id)
     if engine and engine.is_interview_done and not engine._saved_to_admin:
         engine._saved_to_admin = True
-        completed_interviews.append({
+        entry = {
             **engine.get_final_results(),
             "session_id": session_id,
             "completed_at": datetime.now().isoformat(),
-        })
-        _save_interviews(completed_interviews)
+        }
+        completed_interviews.append(entry)
+        asyncio.create_task(_supabase_insert(entry))
 
 
 @app.post("/api/store-face/{session_id}")
@@ -360,12 +378,13 @@ async def get_results(session_id: str):
     results = engine.get_final_results()
     if (engine.is_interview_done or engine.is_flagged) and not engine._saved_to_admin:
         engine._saved_to_admin = True
-        completed_interviews.append({
+        entry = {
             **results,
             "session_id": session_id,
             "completed_at": datetime.now().isoformat(),
-        })
-        _save_interviews(completed_interviews)
+        }
+        completed_interviews.append(entry)
+        asyncio.create_task(_supabase_insert(entry))
     return results
 
 
