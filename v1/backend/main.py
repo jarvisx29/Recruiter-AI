@@ -34,19 +34,41 @@ app.add_middleware(
 )
 
 sessions: dict[str, InterviewEngine] = {}
-completed_interviews: list = []
 resume_parser = ResumeParser()
 
 RETELL_API_KEY = os.getenv("RETELL_API_KEY")
 RETELL_AGENT_ID = os.getenv("RETELL_AGENT_ID")
 ADMIN_PASSWORD = os.getenv("ADMIN_PASSWORD", "srm@admin2026")
 
+INTERVIEWS_FILE = "/app/interviews.json"
+
+
+def _load_interviews() -> list:
+    try:
+        if os.path.exists(INTERVIEWS_FILE):
+            with open(INTERVIEWS_FILE) as f:
+                return json.load(f)
+    except Exception:
+        pass
+    return []
+
+
+def _save_interviews(interviews: list) -> None:
+    try:
+        with open(INTERVIEWS_FILE, "w") as f:
+            json.dump(interviews, f)
+    except Exception:
+        pass
+
+
+completed_interviews: list = _load_interviews()
+
 
 @app.get("/health")
 async def health():
     return {
         "status": "ok",
-        "version": "1.1",
+        "version": "1.2",
         "active_sessions": len(sessions),
         "interviews_saved": len(completed_interviews),
         "deepgram_key_set": bool(os.getenv("DEEPGRAM_API_KEY")),
@@ -293,6 +315,7 @@ async def deepgram_interview_ws(websocket: WebSocket, session_id: str):
             "session_id": session_id,
             "completed_at": datetime.now().isoformat(),
         })
+        _save_interviews(completed_interviews)
 
 
 @app.post("/api/store-face/{session_id}")
@@ -342,6 +365,7 @@ async def get_results(session_id: str):
             "session_id": session_id,
             "completed_at": datetime.now().isoformat(),
         })
+        _save_interviews(completed_interviews)
     return results
 
 
