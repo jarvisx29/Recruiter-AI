@@ -4,6 +4,7 @@ import Apply from './pages/Apply'
 import Interview from './pages/Interview'
 import Shortlist from './pages/Shortlist'
 import Results from './pages/Results'
+import Admin from './pages/Admin'
 import { loadFaceModels } from './hooks/useWebcamSecurity'
 
 export default function App() {
@@ -17,6 +18,7 @@ export default function App() {
       <Route path="/interview" element={<Interview />} />
       <Route path="/shortlist" element={<Shortlist />} />
       <Route path="/results" element={<Results />} />
+      <Route path="/admin" element={<Admin />} />
       <Route path="*" element={<Navigate to="/" />} />
     </Routes>
   )

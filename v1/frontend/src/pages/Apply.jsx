@@ -379,7 +379,7 @@ export default function Apply() {
   const [loading, setLoading] = useState(false)
   const [loadStep, setLoadStep] = useState(0)
   const [error, setError] = useState('')
-  const [form, setForm] = useState({ name: '', email: '', position: '' })
+  const [form, setForm] = useState({ name: '', email: '', phone: '', position: '' })
 
   // Photo upload on form page
   const [userPhotoPreview, setUserPhotoPreview] = useState(null) // data-URL from form upload
@@ -446,6 +446,7 @@ export default function Apply() {
     formData.append('file', file)
     formData.append('name', form.name)
     formData.append('email', form.email)
+    formData.append('phone', form.phone)
     formData.append('position', form.position)
 
     try {
@@ -566,9 +567,29 @@ export default function Apply() {
               <div className="ap-srm-title">AI Mock Interview Drive</div>
             </div>
           </div>
-          <div className="ap-srm-header-right">
-            <span className="ap-srm-dot" />
-            AI Powered
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div className="ap-srm-header-right">
+              <span className="ap-srm-dot" />
+              AI Powered
+            </div>
+            <button
+              onClick={() => navigate('/admin')}
+              style={{
+                background: 'rgba(26,35,126,0.07)',
+                border: '1px solid rgba(26,35,126,0.2)',
+                borderRadius: '20px',
+                padding: '5px 14px',
+                fontSize: '0.72rem',
+                fontWeight: 700,
+                color: '#1a237e',
+                textTransform: 'uppercase',
+                letterSpacing: '0.6px',
+                cursor: 'pointer',
+                fontFamily: 'inherit',
+              }}
+            >
+              Admin
+            </button>
           </div>
         </header>
 
@@ -604,6 +625,12 @@ export default function Apply() {
                 <label>Email Address</label>
                 <input type="email" placeholder="you@srmist.edu.in" required
                   value={form.email} onChange={e => setForm(f => ({ ...f, email: e.target.value }))} />
+              </div>
+
+              <div className="ap-field">
+                <label>Phone Number</label>
+                <input type="tel" placeholder="e.g. 9876543210" required
+                  value={form.phone} onChange={e => setForm(f => ({ ...f, phone: e.target.value }))} />
               </div>
 
               <div className="ap-field">

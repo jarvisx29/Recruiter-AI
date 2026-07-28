@@ -56,7 +56,8 @@ async def upload_resume(
     file: UploadFile = File(...),
     position: str = Form(...),
     email: str = Form(...),
-    name: str = Form(...)
+    name: str = Form(...),
+    phone: str = Form(default="")
 ):
     content = await file.read()
     if not content:
@@ -70,7 +71,8 @@ async def upload_resume(
         resume_data=resume_data,
         position=position,
         candidate_name=name,
-        candidate_email=email
+        candidate_email=email,
+        candidate_phone=phone
     )
     sessions[session_id] = engine
 

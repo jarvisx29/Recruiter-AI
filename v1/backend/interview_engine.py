@@ -8,11 +8,12 @@ DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
 
 class InterviewEngine:
-    def __init__(self, resume_data: dict, position: str, candidate_name: str, candidate_email: str):
+    def __init__(self, resume_data: dict, position: str, candidate_name: str, candidate_email: str, candidate_phone: str = ""):
         self.resume_data = resume_data
         self.position = position
         self.candidate_name = candidate_name
         self.candidate_email = candidate_email
+        self.candidate_phone = candidate_phone
 
         # Compact resume summary built once, reused every turn instead of resending full JSON
         self.resume_summary = self._build_resume_summary(resume_data)
@@ -169,6 +170,7 @@ Return ONLY valid JSON:
         return {
             "candidate": self.candidate_name,
             "email": self.candidate_email,
+            "phone": self.candidate_phone,
             "position": self.position,
             "topics_covered": self.topics_covered,
             "topic_scores": self.topic_scores,
