@@ -219,8 +219,15 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 await jt({"type": "processing"})
                 await jt({"type": "transcript", "role": "user", "text": answer})
 
-                result = await engine.process_answer(answer)
-                response_text = result.get("response_text", "")
+                try:
+                    result = await engine.process_answer(answer)
+                    response_text = result.get("response_text", "")
+                except Exception:
+                    # Groq had a transient error — reset silently, let candidate speak again
+                    processing = False
+                    recording_turn = True
+                    await jt({"type": "user_turn"})
+                    continue
 
                 await jt({"type": "transcript", "role": "agent", "text": response_text})
                 speak_task = asyncio.create_task(speak(response_text))
