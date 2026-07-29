@@ -110,9 +110,14 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     json={"text": text},
                 ) as resp:
                     async for chunk in resp.aiter_bytes(chunk_size=4096):
-                        await browser_ws.send_bytes(chunk)
+                        try:
+                            await browser_ws.send_bytes(chunk)
+                        except Exception:
+                            return  # browser WS closed mid-stream — stop sending
         except asyncio.CancelledError:
             pass
+        except Exception:
+            pass  # TTS request failed — skip audio, continue interview
 
         await jt({"type": "audio_end"})
         await jt({"type": "agent_stop_talking"})
@@ -219,8 +224,18 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 await jt({"type": "processing"})
                 await jt({"type": "transcript", "role": "user", "text": answer})
 
-                result = await engine.process_answer(answer)
-                response_text = result.get("response_text", "")
+                try:
+                    result = await engine.process_answer(answer)
+                    response_text = result.get("response_text", "")
+                except Exception:
+                    # Groq API failed — acknowledge gracefully, let candidate retry
+                    processing = False
+                    fallback = "I'm sorry, I didn't quite catch that. Could you please repeat your answer?"
+                    await jt({"type": "transcript", "role": "agent", "text": fallback})
+                    speak_task = asyncio.create_task(speak(fallback))
+                    await speak_task
+                    await jt({"type": "user_turn"})
+                    continue
 
                 await jt({"type": "transcript", "role": "agent", "text": response_text})
                 speak_task = asyncio.create_task(speak(response_text))

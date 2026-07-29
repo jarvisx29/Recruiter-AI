@@ -1,4 +1,5 @@
 from groq import AsyncGroq
+import asyncio
 import json
 import os
 
@@ -84,13 +85,26 @@ Return ONLY valid JSON:
     "first_topic": "topic1"
 }}"""
 
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[{"role": "system", "content": plan_prompt}],
-            response_format={"type": "json_object"}
-        )
-
-        plan = json.loads(response.choices[0].message.content)
+        last_err = None
+        for attempt in range(3):
+            try:
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[{"role": "system", "content": plan_prompt}],
+                        response_format={"type": "json_object"},
+                    ),
+                    timeout=25.0,
+                )
+                plan = json.loads(response.choices[0].message.content)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1)
+        if last_err:
+            raise last_err
         self.interview_plan = plan
         self.topics_remaining = list(plan["topics"])
         self.current_topic = plan["first_topic"]
@@ -154,17 +168,30 @@ Return ONLY valid JSON:
     "reasoning": "brief internal note"
 }}"""
 
-        response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *self.conversation_history[-12:]
-            ],
-            response_format={"type": "json_object"},
-            max_tokens=400,
-        )
-
-        result = json.loads(response.choices[0].message.content)
+        last_err = None
+        for attempt in range(3):
+            try:
+                response = await asyncio.wait_for(
+                    client.chat.completions.create(
+                        model="llama-3.3-70b-versatile",
+                        messages=[
+                            {"role": "system", "content": system_prompt},
+                            *self.conversation_history[-12:]
+                        ],
+                        response_format={"type": "json_object"},
+                        max_tokens=400,
+                    ),
+                    timeout=25.0,
+                )
+                result = json.loads(response.choices[0].message.content)
+                last_err = None
+                break
+            except Exception as e:
+                last_err = e
+                if attempt < 2:
+                    await asyncio.sleep(1)
+        if last_err:
+            raise last_err
 
         self.current_depth = max(1, min(3, self.current_depth + result.get("depth_change", 0)))
         action = result.get("action")
