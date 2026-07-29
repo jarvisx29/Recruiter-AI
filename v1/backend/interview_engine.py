@@ -9,21 +9,21 @@ DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 JOB_CONTEXT = """
 ROLE: Software Support Engineer at Motorq (connected-car data platform serving fleets, insurers, dealers)
 
-TOPIC SELECTION RULES — pick exactly 4 topics:
-- Topic 1 MUST be about the candidate's own projects or experience — ask them to walk through something real they built or worked on, then go deeper on the technical choices they made.
-- Topics 2, 3, 4 — pick from what the candidate actually knows, prioritised by Motorq's needs:
-  * Programming fundamentals (Python / JS / Java) — focus on code reasoning, not syntax recitation
-  * DSA — problem-solving approach, tradeoffs, not textbook definitions
-  * SQL & scripting — data investigation, safe updates, automation thinking
-  * Debugging & systems thinking — production incidents, log reading, root-cause process
-  * Distributed systems (only if resume shows Kafka / Spark / event-driven / CI-CD)
+INTERVIEW STRUCTURE — follow this order strictly, like a real technical interview:
+1. WARM-UP (opening only): Start with "Tell me a bit about yourself and your technical background." This is NOT a scored topic — it just sets context. Use their answer to transition naturally into Topic 1.
+2. Topic 1 — DSA or Programming Fundamentals: establish technical competence first. Pick whichever the candidate's resume shows more of.
+3. Topic 2 — SQL or Debugging: domain-specific for this support role.
+4. Topic 3 — the other of SQL/Debugging not used in Topic 2, OR Distributed Systems if resume shows it.
+5. Topic 4 — Projects/Experience LAST: by now you know their technical level. Tie it back to their resume: "Earlier you mentioned X — walk me through a specific challenge you hit and how you solved it."
 
-QUESTION STYLE FOR THIS ROLE — Motorq is a production-first company:
-- Prefer situational and project-based questions: "In your project X, how did you handle Y?"
-- For debugging: "If a production job started failing at 3am, what's your first move?" — look for: reproduce → check logs → isolate → hypothesise → verify
-- For SQL: "How would you safely update a column for 10,000 rows without breaking prod?" — look for WHERE clause awareness, dry-run thinking
-- For DSA: "Walk me through your thought process for choosing a data structure for X" — look for tradeoff reasoning, not memorised answers
-- For projects: dig into why they made specific technical decisions — this reveals real understanding vs resume padding
+NEVER ask about projects first. Establish technical fundamentals before exploring experience.
+
+QUESTION STYLE — Motorq is a production-first, code-first company:
+- DSA: "Walk me through how you'd approach finding duplicates in a large dataset — what data structure and why?" Look for: clarifying requirements, tradeoff reasoning, not textbook recitation.
+- Programming: "How would you approach debugging a Python script that's consuming way more memory than expected?" Look for: systematic approach, profiling, not just guessing.
+- Debugging: "A production service is throwing 500 errors every few minutes but only for certain users — what's your first move?" Look for: reproduce → logs → isolate → fix → verify.
+- SQL: "How would you safely update a wrong value in a column for 10,000 rows in production?" Look for: SELECT first to verify, WHERE clause, transaction awareness.
+- Projects: dig into WHY they made specific technical decisions, not what the project does.
 
 SCORING LENS:
 - Strong: systematic thinking, explains WHY not just WHAT, mentions edge cases or failure modes
@@ -73,14 +73,14 @@ Candidate profile:
 {self.resume_summary}
 
 Tasks:
-1. Pick exactly 4 interview topics. Choose from what the candidate actually knows, prioritised by the role's needs above. Do NOT invent topics the candidate has no background in.
-2. Write a warm, natural 2-sentence opening using their first name — friendly but professional, like a real human recruiter. Do NOT over-introduce. Get to the point.
-3. Immediately ask the first question on the first topic at surface level. Keep it concise. This is a VOICE interview — the question must be answerable verbally. Never ask the candidate to write or type code.
+1. Pick exactly 4 interview topics following the INTERVIEW STRUCTURE order above. Topics must match what the candidate actually knows from their profile.
+2. Write a warm, natural opening using their first name. MUST end with "Tell me a bit about yourself and your technical background." — this is the universal real-interview opener. Do NOT ask a technical question yet. Do NOT mention any specific topic or project yet.
+3. This is a VOICE interview — all questions must be answerable verbally. Never ask the candidate to write or type code.
 
 Return ONLY valid JSON:
 {{
     "topics": ["topic1", "topic2", "topic3", "topic4"],
-    "opening": "Full opening statement including first question",
+    "opening": "Hi [name], ... Tell me a bit about yourself and your technical background.",
     "first_topic": "topic1"
 }}"""
 
