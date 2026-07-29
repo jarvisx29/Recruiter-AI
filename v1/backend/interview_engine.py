@@ -6,6 +6,24 @@ client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
 
 DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
+JOB_CONTEXT = """
+ROLE: Software Support Engineer at Motorq (connected-car data platform)
+
+WHAT MOTORQ TESTS — pick topics that overlap with what the candidate actually knows:
+Priority 1 — Programming fundamentals: Python / JS / Java, writing real code, not just scripts
+Priority 2 — DSA: data structures, algorithms, problem-solving, tradeoffs
+Priority 3 — SQL & scripting: data queries, writing scripts, automation
+Priority 4 — Debugging & systems thinking: reading logs/stack traces, root-cause analysis, production incidents
+Priority 5 (only if resume shows it) — Distributed systems: Kafka, Spark, event-driven architecture, CI/CD
+
+SCORING LENS FOR THIS ROLE:
+- Strong answer: shows systematic thinking, explains WHY not just WHAT, considers edge cases
+- Debugging questions: look for structured approach — reproduce → isolate → hypothesise → verify
+- SQL questions: look for correctness + awareness of data safety (WHERE clause before UPDATE/DELETE)
+- DSA: look for ability to clarify requirements, pick right structure, discuss time/space tradeoffs
+- Communication: can they explain a technical issue clearly to a non-engineer? That's a hard requirement.
+"""
+
 
 class InterviewEngine:
     def __init__(self, resume_data: dict, position: str, candidate_name: str, candidate_email: str, candidate_phone: str = ""):
@@ -42,11 +60,13 @@ class InterviewEngine:
     async def get_opening(self) -> str:
         plan_prompt = f"""You are RecruiterAI, a warm and professional Voice AI interviewer for SRM Placements. You are interviewing {self.candidate_name} for: {self.position}.
 
+{JOB_CONTEXT}
+
 Candidate profile:
 {self.resume_summary}
 
 Tasks:
-1. Pick 4 interview topics from their actual skills, most relevant to the position.
+1. Pick exactly 4 interview topics. Choose from what the candidate actually knows, prioritised by the role's needs above. Do NOT invent topics the candidate has no background in.
 2. Write a warm, natural 2-sentence opening using their first name — friendly but professional, like a real human recruiter. Do NOT over-introduce. Get to the point.
 3. Immediately ask the first question on the first topic at surface level. Keep it concise.
 
@@ -77,6 +97,8 @@ Return ONLY valid JSON:
         self.conversation_history.append({"role": "user", "content": candidate_answer})
 
         system_prompt = f"""You are RecruiterAI, a warm and professional Voice AI interviewer for SRM Placements. {self.candidate_name} is applying for: {self.position}.
+
+{JOB_CONTEXT}
 
 INTERVIEW STATE:
 - Current topic: {self.current_topic} | Depth: {self.current_depth} ({DEPTH_LABELS.get(self.current_depth)})
