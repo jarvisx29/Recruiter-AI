@@ -270,6 +270,22 @@ export function useDeepgramInterview(sessionId) {
     setStatus('done')
   }, [cleanup])
 
+  // Resume AudioContext if browser suspends it on scroll / tab switch
+  useEffect(() => {
+    const resume = () => {
+      if (playbackCtxRef.current?.state === 'suspended') playbackCtxRef.current.resume()
+      if (captureCtxRef.current?.state === 'suspended') captureCtxRef.current.resume()
+    }
+    document.addEventListener('scroll', resume, { passive: true })
+    document.addEventListener('visibilitychange', resume)
+    window.addEventListener('focus', resume)
+    return () => {
+      document.removeEventListener('scroll', resume)
+      document.removeEventListener('visibilitychange', resume)
+      window.removeEventListener('focus', resume)
+    }
+  }, [])
+
   useEffect(() => {
     return () => {
       wsRef.current?.close()
