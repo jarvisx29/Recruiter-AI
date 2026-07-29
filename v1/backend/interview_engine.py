@@ -171,7 +171,8 @@ Return ONLY valid JSON:
 
         if action in ["next_topic", "bluff_called", "wrap_up"]:
             raw_score = result.get("topic_score", 5)
-            self.topic_scores[self.current_topic] = int(raw_score) if isinstance(raw_score, (int, float)) else 5
+            score = int(raw_score) if isinstance(raw_score, (int, float)) else 5
+            self.topic_scores[self.current_topic] = max(1, score)  # minimum 1, never 0
             self.topics_covered.append(self.current_topic)
 
             if self.topics_remaining:
@@ -180,6 +181,14 @@ Return ONLY valid JSON:
             else:
                 self.is_interview_done = True
                 result["interview_complete"] = True
+                # Hardcode the closing — never rely on LLM to generate this correctly
+                first_name = self.candidate_name.split()[0]
+                result["response_text"] = (
+                    f"That's great, {first_name}, thank you so much for your time today. "
+                    "This has been a really insightful conversation. "
+                    "Our team will review your responses and get back to you shortly. "
+                    "Do you have any final questions for me?"
+                )
 
         if result.get("interview_complete"):
             self.is_interview_done = True
