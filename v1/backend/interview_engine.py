@@ -6,7 +6,7 @@ client = AsyncOpenAI(
     api_key=os.getenv("CEREBRAS_API_KEY"),
     base_url="https://api.cerebras.ai/v1",
 )
-_MODEL = "llama-3.3-70b"
+_MODEL = "gpt-oss-120b"
 
 DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
