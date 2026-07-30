@@ -29,6 +29,8 @@ QUESTION STYLE — Motorq is a production-first, code-first company:
 - SQL: "How would you safely update a wrong value in a column for 10,000 rows in production?" Look for: SELECT first to verify, WHERE clause, transaction awareness.
 - Projects: dig into WHY they made specific technical decisions, not what the project does.
 
+CANDIDATE CONTEXT: These are final-year engineering students fresh out of college. Calibrate questions for a junior/entry-level bar — practical, real-world scenarios, not senior-engineer depth. Do not ask about advanced internals, obscure APIs, or deep architecture. The goal is to see if they can think, not to trick them.
+
 SCORING LENS:
 - Strong: systematic thinking, explains WHY not just WHAT, mentions edge cases or failure modes
 - Weak: vague, can only define things without applying them, no mention of tradeoffs
@@ -56,6 +58,7 @@ class InterviewEngine:
         self.interview_plan = None
         self.is_interview_done = False
         self.is_flagged = False
+        self.exchanges_on_topic = 0
         self.face_embedding = None  # InsightFace embedding stored at Apply verification
         self._saved_to_admin = False
 
@@ -108,6 +111,7 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
 
     async def process_answer(self, candidate_answer: str) -> dict:
         self.conversation_history.append({"role": "user", "content": candidate_answer})
+        self.exchanges_on_topic += 1
 
         system_prompt = f"""You are RecruiterAI, a warm and professional Voice AI interviewer for SRM Placements. {self.candidate_name} is applying for: {self.position}.
 
@@ -141,12 +145,12 @@ OBJECTION HANDLING:
 DECISION RULES — follow strictly:
 1. INCOMPLETE: Answer trails off → ask to add more. action: simplify, depth_change: 0.
 2. BLUFF: Clearly factually wrong (not just vague) → call out gently once. action: bluff_called, depth_change: 0.
-3. DEPTH UP: Strong correct answer with reasoning → harder follow-up on SAME topic. action: go_deeper, depth_change: 1.
-4. DEPTH DOWN: Weak but genuine attempt → simpler angle on SAME topic. action: simplify, depth_change: -1.
-5. NEXT TOPIC: ONLY after minimum 2 exchanges on current topic AND (depth 3 reached OR 2 consecutive wrong/vague answers). Look at "Topics remaining:" in INTERVIEW STATE — if NOT empty, use action: next_topic, depth_change: 0.
+3. DEPTH UP: Strong correct answer with reasoning → one follow-up on SAME topic (entry-level difficulty only). action: go_deeper, depth_change: 1.
+4. DEPTH DOWN: Weak but genuine attempt → one simpler angle. action: simplify, depth_change: -1.
+5. NEXT TOPIC: After 2-3 exchanges on current topic, move on. NEVER spend more than 3 exchanges on any topic. Use action: next_topic if "Topics remaining:" is not empty.
 6. WRAP UP: ONLY when "Topics remaining: []" in the INTERVIEW STATE above. action: wrap_up.
 
-CRITICAL: Never use next_topic or wrap_up after just 1 exchange. Every topic needs at least 2 questions minimum.
+CRITICAL: 2-3 exchanges per topic is the target. Move on briskly — this is a screening interview, not a deep-dive.
 
 Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never null):
 {{
@@ -164,7 +168,7 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
                 *self.conversation_history[-12:]
             ],
             response_format={"type": "json_object"},
-            max_tokens=600,
+            max_tokens=350,
             temperature=0.7,
         )
 
@@ -175,6 +179,11 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
         self.current_depth = max(1, min(3, self.current_depth + depth_change))
         action = result.get("action")
 
+        # Hard cap: force topic change after 4 exchanges regardless of LLM
+        if self.exchanges_on_topic >= 4 and action not in ["next_topic", "wrap_up"]:
+            action = "next_topic" if self.topics_remaining else "wrap_up"
+            result["action"] = action
+
         if action in ["next_topic", "bluff_called", "wrap_up"]:
             raw_score = result.get("topic_score", 5)
             score = int(raw_score) if isinstance(raw_score, (int, float)) else 5
@@ -184,6 +193,7 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
             if self.topics_remaining:
                 self.current_topic = self.topics_remaining.pop(0)
                 self.current_depth = 1
+                self.exchanges_on_topic = 0
             else:
                 self.is_interview_done = True
                 result["interview_complete"] = True
