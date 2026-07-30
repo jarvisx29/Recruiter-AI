@@ -131,7 +131,12 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
         await jt({"type": "clear_audio"})
 
     # ── opening ───────────────────────────────────────────────────────────────
-    opening = await engine.get_opening()
+    try:
+        opening = await engine.get_opening()
+    except Exception as _e:
+        print(f"[get_opening ERROR] {type(_e).__name__}: {_e}", flush=True)
+        await jt({"type": "error", "message": "Failed to start interview. Please refresh and try again."})
+        return
     await jt({"type": "transcript", "role": "agent", "text": opening})
     speak_task = asyncio.create_task(speak(opening))
     await speak_task
