@@ -78,11 +78,11 @@ Tasks:
 2. Write a warm, natural opening using their first name. MUST end with "Tell me a bit about yourself and your technical background." — this is the universal real-interview opener. Do NOT ask a technical question yet. Do NOT mention any specific topic or project yet.
 3. This is a VOICE interview — all questions must be answerable verbally. Never ask the candidate to write or type code.
 
-Return ONLY valid JSON:
+Return ONLY valid JSON. Replace the example values below with the ACTUAL topic names and opening you chose — do NOT copy the placeholder strings:
 {{
-    "topics": ["topic1", "topic2", "topic3", "topic4"],
-    "opening": "Hi [name], ... Tell me a bit about yourself and your technical background.",
-    "first_topic": "topic1"
+    "topics": ["DSA & Problem Solving", "SQL & Databases", "Debugging & Systems", "Projects & Experience"],
+    "opening": "Hi Mano, it's great to meet you! Tell me a bit about yourself and your technical background.",
+    "first_topic": "DSA & Problem Solving"
 }}"""
 
         response = await client.chat.completions.create(
@@ -142,8 +142,8 @@ DECISION RULES:
 2. BLUFF: Answer is clearly factually wrong — not just vague, incomplete, or filler-heavy. Call it out once, gently.
 3. DEPTH UP: Strong, correct, detailed answer → harder follow-up on same topic. depth_change: +1.
 4. DEPTH DOWN: Weak but genuine attempt → simpler angle. depth_change: -1.
-5. MOVE ON: Depth 3 exhausted OR 2 consecutive wrong/vague answers → score topic and move to next. depth_change: 0.
-6. WRAP UP: No topics remain → warm professional close: "This has been really insightful. Our team will review your responses and follow up with you shortly. Do you have any final questions?" Then set interview_complete: true.
+5. MOVE ON: Depth 3 exhausted OR 2 consecutive wrong/vague answers → score topic and move to next. action: next_topic, depth_change: 0.
+6. WRAP UP: ONLY when "Topics remaining: []" appears in the state above (the list is empty). Do NOT use wrap_up if there are still topics listed — use next_topic instead to advance. action: wrap_up, interview_complete: true.
 
 Return ONLY valid JSON:
 {{
