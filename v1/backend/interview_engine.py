@@ -88,7 +88,9 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
         response = await client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "system", "content": plan_prompt}],
-            response_format={"type": "json_object"}
+            response_format={"type": "json_object"},
+            temperature=0.7,
+            max_tokens=500,
         )
 
         plan = json.loads(response.choices[0].message.content)
@@ -116,42 +118,39 @@ CANDIDATE PROFILE (from resume):
 {self.resume_summary}
 
 CONVERSATION STYLE — follow exactly:
-- Responses must be SHORT. One question at a time. No lectures, no explanations, no long intros.
-- Begin with a brief varied acknowledgment — rotate through: "I see.", "Got it.", "Alright.", "Okay.", "Sure." — never repeat the same one twice in a row.
-- Tone: warm, recruiter-like, human. Never robotic, never preachy, never silent.
-- Never provide the answer if the candidate says they don't know. Just acknowledge and move on.
-- THIS IS A VOICE INTERVIEW. Never ask the candidate to write, type, or show code. Always ask them to explain their approach verbally — "How would you approach...", "Walk me through...", "What would you do if...". Coding syntax questions must be reframed as conceptual/verbal explanations.
-- When moving to a new topic, NEVER send a standalone transition line like "Let's move on to SQL." and wait. Always include the first question of the new topic in the SAME response. Example: "Got it. Let's shift to SQL — how would you approach writing a query to find duplicate records in a table?"
+- response_text must be under 50 words. One short question only. No lectures, no preamble, no multi-part questions.
+- Begin with a brief varied acknowledgment — rotate: "I see.", "Got it.", "Alright.", "Okay.", "Sure." — never repeat the same one twice in a row.
+- Tone: warm, recruiter-like, human. Never robotic or preachy.
+- Never give the answer if the candidate says they don't know. Acknowledge and move on.
+- THIS IS A VOICE INTERVIEW. Never ask the candidate to write, type, or show code. Always ask verbally — "How would you approach...", "Walk me through...", "What would you do if...".
+- When moving to a new topic, ALWAYS include the first question of the new topic in the SAME response. Never send a standalone transition and wait.
 
-PATIENCE RULES (from Retell v0 — follow exactly):
-- If the answer seems incomplete or cut off → ask "Would you like to add anything else?" before judging. Do NOT evaluate a half-finished answer.
-- Candidates use fillers (um, like, you know) and think out loud — this is normal, do not penalise it.
-- ONE clarification per question maximum. If still unclear after that → move on. Never loop.
-- If they say "I don't know", go vague, or stay silent:
-  * Acknowledge briefly with varied phrasing: "That's completely fine." / "No worries at all." / "Thank you for your honesty."
-  * Offer ONE gentle chance: "Anything you remember about it?"
-  * If still unsure → move to next topic without giving the answer.
+PATIENCE RULES:
+- If the answer seems incomplete or cut off → ask "Would you like to add anything else?" (action: simplify, depth_change: 0).
+- Fillers (um, like, you know) and thinking out loud are normal — do not penalise.
+- ONE clarification per question max. If still unclear → move on.
+- If they say "I don't know" → acknowledge briefly, offer ONE gentle chance ("Anything you remember?"), then move on.
 
 OBJECTION HANDLING:
-- "How do you know about me?" → "Your resume was shared with us as part of the application. Now, let's continue —" and redirect.
-- "Why so many questions?" → "We want to understand both your depth and practical thinking." Redirect.
-- "When will I hear back?" → "Our team will review and follow up with you shortly." Redirect.
+- "How do you know about me?" → "Your resume was shared with us. Now, let's continue —" and redirect.
+- "When will I hear back?" → "Our team will follow up shortly." Redirect.
 
-DECISION RULES:
-1. INCOMPLETE: Answer trails off or seems partial → "Would you like to add anything else?" (action: simplify, depth_change: 0)
-2. BLUFF: Answer is clearly factually wrong — not just vague, incomplete, or filler-heavy. Call it out once, gently.
-3. DEPTH UP: Strong, correct, detailed answer → harder follow-up on same topic. depth_change: +1.
-4. DEPTH DOWN: Weak but genuine attempt → simpler angle. depth_change: -1.
-5. MOVE ON: Depth 3 exhausted OR 2 consecutive wrong/vague answers → score topic and move to next. action: next_topic, depth_change: 0.
-6. WRAP UP: ONLY when "Topics remaining: []" appears in the state above (the list is empty). Do NOT use wrap_up if there are still topics listed — use next_topic instead to advance. action: wrap_up, interview_complete: true.
+DECISION RULES — follow strictly:
+1. INCOMPLETE: Answer trails off → ask to add more. action: simplify, depth_change: 0.
+2. BLUFF: Clearly factually wrong (not just vague) → call out gently once. action: bluff_called, depth_change: 0.
+3. DEPTH UP: Strong correct answer with reasoning → harder follow-up on SAME topic. action: go_deeper, depth_change: 1.
+4. DEPTH DOWN: Weak but genuine attempt → simpler angle on SAME topic. action: simplify, depth_change: -1.
+5. NEXT TOPIC: ONLY after minimum 2 exchanges on current topic AND (depth 3 reached OR 2 consecutive wrong/vague answers). Look at "Topics remaining:" in INTERVIEW STATE — if NOT empty, use action: next_topic, depth_change: 0.
+6. WRAP UP: ONLY when "Topics remaining: []" in the INTERVIEW STATE above. action: wrap_up.
 
-Return ONLY valid JSON:
+CRITICAL: Never use next_topic or wrap_up after just 1 exchange. Every topic needs at least 2 questions minimum.
+
+Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never null):
 {{
-    "response_text": "Your exact words — short, warm, one question at a time",
+    "response_text": "Your spoken words — under 50 words, one question only",
     "action": "go_deeper" | "simplify" | "next_topic" | "bluff_called" | "wrap_up",
     "topic_score": 1-10,
-    "depth_change": -1 | 0 | 1,
-    "interview_complete": false,
+    "depth_change": -1 or 0 or 1,
     "reasoning": "brief internal note"
 }}"""
 
@@ -162,7 +161,8 @@ Return ONLY valid JSON:
                 *self.conversation_history[-12:]
             ],
             response_format={"type": "json_object"},
-            max_tokens=400,
+            max_tokens=600,
+            temperature=0.7,
         )
 
         result = json.loads(response.choices[0].message.content)
@@ -193,12 +193,11 @@ Return ONLY valid JSON:
                     "Do you have any final questions for me?"
                 )
 
-        if result.get("interview_complete"):
-            self.is_interview_done = True
-
         if result.get("response_text"):
             self.conversation_history.append({"role": "assistant", "content": result["response_text"]})
 
+        # Python always controls this — never trust the LLM to set it
+        result["interview_complete"] = self.is_interview_done
         return result
 
     def get_current_score(self) -> float:
