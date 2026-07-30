@@ -108,7 +108,7 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
             model=_MODEL,
             messages=[{"role": "system", "content": plan_prompt}],
             temperature=0.7,
-            max_tokens=500,
+            max_tokens=800,
         )
 
         plan = _parse_json(response.choices[0].message.content)
@@ -179,7 +179,7 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
                 {"role": "system", "content": system_prompt},
                 *self.conversation_history[-12:]
             ],
-            max_tokens=350,
+            max_tokens=1000,
             temperature=0.7,
         )
 
