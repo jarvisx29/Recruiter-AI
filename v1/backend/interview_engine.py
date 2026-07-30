@@ -9,45 +9,45 @@ def _parse_json(text: str) -> dict:
     if text is None:
         raise ValueError("Model returned empty content")
     text = text.strip()
-    # Strip markdown code fences if present
     match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if match:
         text = match.group(1)
     return json.loads(text)
 
+
 client = AsyncOpenAI(
     api_key=os.getenv("CEREBRAS_API_KEY"),
     base_url="https://api.cerebras.ai/v1",
 )
-_MODEL = "gpt-oss-120b"
+_MODEL = "gemma-4-31b"  # non-reasoning model: consistent ~60ms, no variable reasoning overhead
 
 DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
 JOB_CONTEXT = """
 ROLE: Software Support Engineer at Motorq (connected-car data platform serving fleets, insurers, dealers)
 
-INTERVIEW STRUCTURE — follow this order strictly, like a real technical interview:
-1. WARM-UP (opening only): Start with "Tell me a bit about yourself and your technical background." This is NOT a scored topic — it just sets context. Use their answer to transition naturally into Topic 1.
-2. Topic 1 — DSA or Programming Fundamentals: establish technical competence first. Pick whichever the candidate's resume shows more of.
+INTERVIEW STRUCTURE — follow this order strictly:
+1. WARM-UP (opening only): "Tell me a bit about yourself and your technical background." NOT scored — just sets context.
+2. Topic 1 — DSA or Programming Fundamentals: establish technical competence first.
 3. Topic 2 — SQL or Debugging: domain-specific for this support role.
-4. Topic 3 — the other of SQL/Debugging not used in Topic 2, OR Distributed Systems if resume shows it.
-5. Topic 4 — Projects/Experience LAST: by now you know their technical level. Tie it back to their resume: "Earlier you mentioned X — walk me through a specific challenge you hit and how you solved it."
+4. Topic 3 — the other of SQL/Debugging not used in Topic 2.
+5. Topic 4 — Projects/Experience LAST: "Earlier you mentioned X — walk me through a specific challenge you hit and how you solved it."
 
-NEVER ask about projects first. Establish technical fundamentals before exploring experience.
+NEVER ask about projects first. Always follow this exact order.
 
-QUESTION STYLE — Motorq is a production-first, code-first company:
-- DSA: "Walk me through how you'd approach finding duplicates in a large dataset — what data structure and why?" Look for: clarifying requirements, tradeoff reasoning, not textbook recitation.
-- Programming: "How would you approach debugging a Python script that's consuming way more memory than expected?" Look for: systematic approach, profiling, not just guessing.
-- Debugging: "A production service is throwing 500 errors every few minutes but only for certain users — what's your first move?" Look for: reproduce → logs → isolate → fix → verify.
-- SQL: "How would you safely update a wrong value in a column for 10,000 rows in production?" Look for: SELECT first to verify, WHERE clause, transaction awareness.
+QUESTION STYLE — entry-level, practical, voice-answerable:
+- DSA: "Walk me through how you'd find duplicates in a large dataset — what data structure and why?"
+- Programming: "How would you debug a Python script that's using way more memory than expected?"
+- Debugging: "A production service throws 500 errors every few minutes but only for some users — what's your first move?"
+- SQL: "How would you safely update a wrong value in a column for 10,000 rows in production?"
 - Projects: dig into WHY they made specific technical decisions, not what the project does.
 
-CANDIDATE CONTEXT: These are final-year engineering students fresh out of college. Calibrate questions for a junior/entry-level bar — practical, real-world scenarios, not senior-engineer depth. Do not ask about advanced internals, obscure APIs, or deep architecture. The goal is to see if they can think, not to trick them.
+CANDIDATE CONTEXT: Final-year engineering students, fresh out of college. Entry-level bar only — practical thinking, not senior depth. No advanced internals, no obscure APIs.
 
 SCORING LENS:
-- Strong: systematic thinking, explains WHY not just WHAT, mentions edge cases or failure modes
-- Weak: vague, can only define things without applying them, no mention of tradeoffs
-- Communication: can they explain a technical issue to a non-engineer? Hard requirement at Motorq.
+- Strong: systematic thinking, explains WHY, mentions edge cases
+- Weak: vague, only defines without applying, no tradeoffs mentioned
+- Communication: can they explain a technical issue to a non-engineer?
 """
 
 
@@ -59,7 +59,6 @@ class InterviewEngine:
         self.candidate_email = candidate_email
         self.candidate_phone = candidate_phone
 
-        # Compact resume summary built once, reused every turn instead of resending full JSON
         self.resume_summary = self._build_resume_summary(resume_data)
 
         self.conversation_history = []
@@ -72,16 +71,16 @@ class InterviewEngine:
         self.is_interview_done = False
         self.is_flagged = False
         self.exchanges_on_topic = 0
-        self.face_embedding = None  # InsightFace embedding stored at Apply verification
+        self.face_embedding = None
         self._saved_to_admin = False
 
     def _build_resume_summary(self, r: dict) -> str:
         parts = []
-        if r.get("domain"):       parts.append(f"Domain: {r['domain']}")
-        if r.get("skills"):       parts.append(f"Skills: {', '.join(r['skills'][:12])}")
+        if r.get("domain"):           parts.append(f"Domain: {r['domain']}")
+        if r.get("skills"):           parts.append(f"Skills: {', '.join(r['skills'][:12])}")
         if r.get("strongest_skills"): parts.append(f"Strongest: {', '.join(r['strongest_skills'][:5])}")
-        if r.get("weak_claims"):  parts.append(f"Claimed but unverified: {', '.join(r['weak_claims'][:4])}")
-        if r.get("projects"):     parts.append(f"Projects: {'; '.join(str(p) for p in r['projects'][:3])}")
+        if r.get("weak_claims"):      parts.append(f"Claimed but unverified: {', '.join(r['weak_claims'][:4])}")
+        if r.get("projects"):         parts.append(f"Projects: {'; '.join(str(p) for p in r['projects'][:3])}")
         return "\n".join(parts)
 
     async def get_opening(self) -> str:
@@ -93,11 +92,11 @@ Candidate profile:
 {self.resume_summary}
 
 Tasks:
-1. Pick exactly 4 interview topics following the INTERVIEW STRUCTURE order above. Topics must match what the candidate actually knows from their profile.
-2. Write a warm, natural opening using their first name. MUST end with "Tell me a bit about yourself and your technical background." — this is the universal real-interview opener. Do NOT ask a technical question yet. Do NOT mention any specific topic or project yet.
-3. This is a VOICE interview — all questions must be answerable verbally. Never ask the candidate to write or type code.
+1. Pick exactly 4 interview topics following the INTERVIEW STRUCTURE order above.
+2. Write a warm opening using their first name that ends with: "Tell me a bit about yourself and your technical background." Do NOT ask a technical question yet.
+3. Voice interview only — all questions must be answerable verbally.
 
-Return ONLY valid JSON. Replace the example values below with the ACTUAL topic names and opening you chose — do NOT copy the placeholder strings:
+Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
 {{
     "topics": ["DSA & Problem Solving", "SQL & Databases", "Debugging & Systems", "Projects & Experience"],
     "opening": "Hi Mano, it's great to meet you! Tell me a bit about yourself and your technical background.",
@@ -108,7 +107,7 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
             model=_MODEL,
             messages=[{"role": "system", "content": plan_prompt}],
             temperature=0.7,
-            max_tokens=800,
+            max_tokens=600,
         )
 
         plan = _parse_json(response.choices[0].message.content)
@@ -125,52 +124,47 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
         self.conversation_history.append({"role": "user", "content": candidate_answer})
         self.exchanges_on_topic += 1
 
+        # What topic comes next (so LLM knows exactly what to transition to)
+        next_topic_hint = self.topics_remaining[0] if self.topics_remaining else "none — wrap up"
+
         system_prompt = f"""You are RecruiterAI, a warm and professional Voice AI interviewer for SRM Placements. {self.candidate_name} is applying for: {self.position}.
 
 {JOB_CONTEXT}
 
 INTERVIEW STATE:
-- Current topic: {self.current_topic} | Depth: {self.current_depth} ({DEPTH_LABELS.get(self.current_depth)})
-- Topics remaining: {self.topics_remaining} | Done: {self.topics_covered} | Scores: {self.topic_scores}
+- Current topic: {self.current_topic} | Depth: {self.current_depth} ({DEPTH_LABELS.get(self.current_depth)}) | Exchanges on this topic: {self.exchanges_on_topic}
+- Topics remaining: {self.topics_remaining}
+- Next topic (if you move on): {next_topic_hint}
+- Done: {self.topics_covered} | Scores: {self.topic_scores}
 
-CANDIDATE PROFILE (from resume):
+CANDIDATE PROFILE:
 {self.resume_summary}
 
-CONVERSATION STYLE — follow exactly:
-- response_text must be under 50 words. One short question only. No lectures, no preamble, no multi-part questions.
-- Begin with a brief varied acknowledgment — rotate: "I see.", "Got it.", "Alright.", "Okay.", "Sure." — never repeat the same one twice in a row.
-- Tone: warm, recruiter-like, human. Never robotic or preachy.
-- Never give the answer if the candidate says they don't know. Acknowledge and move on.
-- THIS IS A VOICE INTERVIEW. Never ask the candidate to write, type, or show code. Always ask verbally — "How would you approach...", "Walk me through...", "What would you do if...".
-- When moving to a new topic, ALWAYS include the first question of the new topic in the SAME response. Never send a standalone transition and wait.
+CONVERSATION STYLE:
+- response_text under 50 words. One question only. No lectures, no preamble.
+- Begin with varied acknowledgment: "I see." / "Got it." / "Alright." / "Okay." / "Sure." — never repeat the same one twice in a row.
+- Warm, recruiter-like tone. THIS IS A VOICE INTERVIEW — no writing/typing questions.
+- When moving to a new topic, include the first question of that NEW topic in the SAME response.
 
 PATIENCE RULES:
-- If the answer seems incomplete or cut off → ask "Would you like to add anything else?" (action: simplify, depth_change: 0).
-- Fillers (um, like, you know) and thinking out loud are normal — do not penalise.
-- ONE clarification per question max. If still unclear → move on.
-- If they say "I don't know" → acknowledge briefly, offer ONE gentle chance ("Anything you remember?"), then move on.
+- Incomplete answer → "Would you like to add anything?" action: simplify, depth_change: 0.
+- Fillers and thinking out loud are normal — do not penalise.
+- "I don't know" → acknowledge, offer ONE gentle chance, then move on.
 
-OBJECTION HANDLING:
-- "How do you know about me?" → "Your resume was shared with us. Now, let's continue —" and redirect.
-- "When will I hear back?" → "Our team will follow up shortly." Redirect.
+DECISION RULES:
+1. DEPTH UP: Strong correct answer → harder follow-up on SAME topic. action: go_deeper, depth_change: 1.
+2. DEPTH DOWN: Weak genuine attempt → simpler angle on SAME topic. action: simplify, depth_change: -1.
+3. NEXT TOPIC: After 2-3 exchanges, move on. action: next_topic.
+   → Your response_text MUST ask the first question for "{next_topic_hint}" — NOT any other topic.
+4. WRAP UP: ONLY when Topics remaining is empty. action: wrap_up.
 
-DECISION RULES — follow strictly:
-1. INCOMPLETE: Answer trails off → ask to add more. action: simplify, depth_change: 0.
-2. BLUFF: Clearly factually wrong (not just vague) → call out gently once. action: bluff_called, depth_change: 0.
-3. DEPTH UP: Strong correct answer with reasoning → one follow-up on SAME topic (entry-level difficulty only). action: go_deeper, depth_change: 1.
-4. DEPTH DOWN: Weak but genuine attempt → one simpler angle. action: simplify, depth_change: -1.
-5. NEXT TOPIC: After 2-3 exchanges on current topic, move on. NEVER spend more than 3 exchanges on any topic. Use action: next_topic if "Topics remaining:" is not empty.
-6. WRAP UP: ONLY when "Topics remaining: []" in the INTERVIEW STATE above. action: wrap_up.
-
-CRITICAL: 2-3 exchanges per topic is the target. Move on briskly — this is a screening interview, not a deep-dive.
-
-Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never null):
+Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
 {{
-    "response_text": "Your spoken words — under 50 words, one question only",
+    "response_text": "Spoken words — under 50 words, one question only",
     "action": "go_deeper" | "simplify" | "next_topic" | "bluff_called" | "wrap_up",
     "topic_score": 1-10,
     "depth_change": -1 or 0 or 1,
-    "reasoning": "brief internal note"
+    "reasoning": "brief note"
 }}"""
 
         response = await client.chat.completions.create(
@@ -179,7 +173,7 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
                 {"role": "system", "content": system_prompt},
                 *self.conversation_history[-12:]
             ],
-            max_tokens=1000,
+            max_tokens=500,
             temperature=0.7,
         )
 
@@ -190,7 +184,13 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
         self.current_depth = max(1, min(3, self.current_depth + depth_change))
         action = result.get("action")
 
-        # Hard cap: force topic change after 4 exchanges regardless of LLM
+        # Python minimum: never leave a topic after only 1 exchange
+        if self.exchanges_on_topic < 2 and action in ["next_topic", "wrap_up"]:
+            action = "simplify"
+            result["action"] = "simplify"
+            result["depth_change"] = 0
+
+        # Python maximum: force topic change after 4 exchanges
         if self.exchanges_on_topic >= 4 and action not in ["next_topic", "wrap_up"]:
             action = "next_topic" if self.topics_remaining else "wrap_up"
             result["action"] = action
@@ -198,7 +198,7 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
         if action in ["next_topic", "bluff_called", "wrap_up"]:
             raw_score = result.get("topic_score", 5)
             score = int(raw_score) if isinstance(raw_score, (int, float)) else 5
-            self.topic_scores[self.current_topic] = max(1, score)  # minimum 1, never 0
+            self.topic_scores[self.current_topic] = max(1, score)
             self.topics_covered.append(self.current_topic)
 
             if self.topics_remaining:
@@ -207,8 +207,6 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
                 self.exchanges_on_topic = 0
             else:
                 self.is_interview_done = True
-                result["interview_complete"] = True
-                # Hardcode the closing — never rely on LLM to generate this correctly
                 first_name = self.candidate_name.split()[0]
                 result["response_text"] = (
                     f"That's great, {first_name}, thank you so much for your time today. "
@@ -220,7 +218,6 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
         if result.get("response_text"):
             self.conversation_history.append({"role": "assistant", "content": result["response_text"]})
 
-        # Python always controls this — never trust the LLM to set it
         result["interview_complete"] = self.is_interview_done
         return result
 
