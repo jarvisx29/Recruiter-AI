@@ -1,6 +1,19 @@
 from openai import AsyncOpenAI
 import json
+import re
 import os
+
+
+def _parse_json(text: str) -> dict:
+    """Extract JSON from model output — handles raw JSON or ```json blocks."""
+    if text is None:
+        raise ValueError("Model returned empty content")
+    text = text.strip()
+    # Strip markdown code fences if present
+    match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
+    if match:
+        text = match.group(1)
+    return json.loads(text)
 
 client = AsyncOpenAI(
     api_key=os.getenv("CEREBRAS_API_KEY"),
@@ -94,12 +107,11 @@ Return ONLY valid JSON. Replace the example values below with the ACTUAL topic n
         response = await client.chat.completions.create(
             model=_MODEL,
             messages=[{"role": "system", "content": plan_prompt}],
-            response_format={"type": "json_object"},
             temperature=0.7,
             max_tokens=500,
         )
 
-        plan = json.loads(response.choices[0].message.content)
+        plan = _parse_json(response.choices[0].message.content)
         self.interview_plan = plan
         self.topics_remaining = list(plan["topics"])
         self.current_topic = plan["first_topic"]
@@ -167,12 +179,11 @@ Return ONLY valid JSON (depth_change must be an integer -1, 0, or 1 — never nu
                 {"role": "system", "content": system_prompt},
                 *self.conversation_history[-12:]
             ],
-            response_format={"type": "json_object"},
             max_tokens=350,
             temperature=0.7,
         )
 
-        result = json.loads(response.choices[0].message.content)
+        result = _parse_json(response.choices[0].message.content)
 
         raw_depth = result.get("depth_change", 0)
         depth_change = int(raw_depth) if isinstance(raw_depth, (int, float)) else 0
