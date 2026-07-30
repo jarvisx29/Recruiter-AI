@@ -166,7 +166,9 @@ Return ONLY valid JSON:
 
         result = json.loads(response.choices[0].message.content)
 
-        self.current_depth = max(1, min(3, self.current_depth + result.get("depth_change", 0)))
+        raw_depth = result.get("depth_change", 0)
+        depth_change = int(raw_depth) if isinstance(raw_depth, (int, float)) else 0
+        self.current_depth = max(1, min(3, self.current_depth + depth_change))
         action = result.get("action")
 
         if action in ["next_topic", "bluff_called", "wrap_up"]:

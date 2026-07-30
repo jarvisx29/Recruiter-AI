@@ -223,9 +223,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     result = await engine.process_answer(answer)
                     response_text = result.get("response_text", "")
                 except Exception as _e:
-                    import traceback
                     print(f"[process_answer ERROR] {type(_e).__name__}: {_e}", flush=True)
-                    traceback.print_exc()
                     processing = False
                     recording_turn = True
                     await jt({"type": "user_turn"})
