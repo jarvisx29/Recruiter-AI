@@ -1,8 +1,9 @@
-from groq import AsyncGroq
+from openai import AsyncOpenAI
 import json
 import os
 
-client = AsyncGroq(api_key=os.getenv("GROQ_API_KEY"))
+client = AsyncOpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+_MODEL = "gpt-4o-mini"
 
 DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
@@ -85,7 +86,7 @@ Return ONLY valid JSON:
 }}"""
 
         response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=_MODEL,
             messages=[{"role": "system", "content": plan_prompt}],
             response_format={"type": "json_object"}
         )
@@ -155,7 +156,7 @@ Return ONLY valid JSON:
 }}"""
 
         response = await client.chat.completions.create(
-            model="llama-3.3-70b-versatile",
+            model=_MODEL,
             messages=[
                 {"role": "system", "content": system_prompt},
                 *self.conversation_history[-12:]
