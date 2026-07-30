@@ -26,9 +26,9 @@ DEEPGRAM_URL = (
     "&encoding=linear16"
     "&sample_rate=16000"
     "&channels=1"
-    "&endpointing=300"
+    "&endpointing=400"
     "&interim_results=true"
-    "&utterance_end_ms=1000"
+    "&utterance_end_ms=1800"
     "&smart_format=true"
 )
 
@@ -211,7 +211,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 dg_finals.clear()
                 recording_turn = False
 
-                if not raw_answer or len(raw_answer) < 2:
+                if not raw_answer or len(raw_answer.split()) < 2:
                     recording_turn = True
                     continue
 

@@ -122,7 +122,10 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
 
     async def process_answer(self, candidate_answer: str) -> dict:
         self.conversation_history.append({"role": "user", "content": candidate_answer})
-        self.exchanges_on_topic += 1
+        # Only count as a real exchange if it's a substantive answer (3+ words)
+        # Short utterances like "Hello?" or "I see" don't consume exchange slots
+        if len(candidate_answer.split()) >= 3:
+            self.exchanges_on_topic += 1
 
         # What topic comes next (so LLM knows exactly what to transition to)
         next_topic_hint = self.topics_remaining[0] if self.topics_remaining else "none — wrap up"
