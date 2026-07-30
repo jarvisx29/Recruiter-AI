@@ -113,6 +113,8 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                         await browser_ws.send_bytes(chunk)
         except asyncio.CancelledError:
             pass
+        except Exception as _e:
+            print(f"[speak ERROR] {type(_e).__name__}: {_e}", flush=True)
 
         await jt({"type": "audio_end"})
         await jt({"type": "agent_stop_talking"})

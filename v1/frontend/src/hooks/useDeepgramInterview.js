@@ -116,6 +116,39 @@ export function useDeepgramInterview(sessionId) {
       const captureCtx = new AudioContext({ sampleRate: 16000 })
       captureCtxRef.current = captureCtx
 
+      // Create and RESUME playback AudioContext here — inside the button-click user gesture.
+      // If created later (in ws.onmessage), Chrome suspends it and audio never plays.
+      const pbCtx = (() => {
+        try { return new AudioContext({ sampleRate: 24000 }) }
+        catch { return new AudioContext() }
+      })()
+      await pbCtx.resume()
+      playbackCtxRef.current = pbCtx
+      ttsRateRef.current = 24000
+
+      const outputProc = pbCtx.createScriptProcessor(2048, 0, 1)
+      outputProcessorRef.current = outputProc
+      outputProc.onaudioprocess = (e) => {
+        const output = e.outputBuffer.getChannelData(0)
+        let pos = 0
+        const queue = pcmQueueRef.current
+        while (pos < output.length && queue.length > 0) {
+          const chunk = queue[0]
+          const need = output.length - pos
+          if (chunk.length <= need) {
+            output.set(chunk, pos)
+            pos += chunk.length
+            queue.shift()
+          } else {
+            output.set(chunk.subarray(0, need), pos)
+            queue[0] = chunk.subarray(need)
+            pos = output.length
+          }
+        }
+        for (; pos < output.length; pos++) output[pos] = 0
+      }
+      outputProc.connect(pbCtx.destination)
+
       const ws = new WebSocket(`${BACKEND_WS}/ws/deepgram/${sessionId}`)
       ws.binaryType = 'arraybuffer'
       wsRef.current = ws
@@ -162,16 +195,12 @@ export function useDeepgramInterview(sessionId) {
         switch (msg.type) {
 
           case 'audio_start':
+            ttsRateRef.current = msg.sampleRate || 24000
             pcmQueueRef.current = []
             if (!playbackCtxRef.current) {
               setupPlayback(msg.sampleRate || 24000)
-            } else {
-              // Resume if suspended (browser autoplay policy)
-              if (playbackCtxRef.current.state === 'suspended') {
-                await playbackCtxRef.current.resume()
-              }
-              ttsRateRef.current = msg.sampleRate || 24000
-              pcmQueueRef.current = []
+            } else if (playbackCtxRef.current.state === 'suspended') {
+              await playbackCtxRef.current.resume()
             }
             break
 
