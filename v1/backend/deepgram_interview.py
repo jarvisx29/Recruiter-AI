@@ -26,9 +26,9 @@ DEEPGRAM_URL = (
     "&encoding=linear16"
     "&sample_rate=16000"
     "&channels=1"
-    "&endpointing=400"
+    "&endpointing=500"
     "&interim_results=true"
-    "&utterance_end_ms=1800"
+    "&utterance_end_ms=5000"
     "&smart_format=true"
 )
 
@@ -49,6 +49,33 @@ _TERM_FIXES = {
     # hashmap
     "ashma": "hashmap", "ash ma": "hashmap", "ash map": "hashmap",
     "hash mob": "hashmap", "hash mop": "hashmap", "has map": "hashmap",
+    # GraphQL
+    "greed ai": "GraphQL", "greed ql": "GraphQL", "graph ql": "GraphQL",
+    "graph q l": "GraphQL", "graph cue l": "GraphQL",
+    # schema — often misheard as "scam" or "skim"
+    "scama": "schema", "skim a": "schema", "skim ah": "schema",
+    "skema": "schema", "shema": "schema",
+    # policies / policy
+    "colis": "policies", "collis": "policies",
+    # Kubernetes
+    "cube ernetes": "Kubernetes", "cube nettles": "Kubernetes",
+    "q bernetes": "Kubernetes", "kubernetes": "Kubernetes",
+    "cube rnetes": "Kubernetes",
+    # Docker
+    "doc ker": "Docker", "doc care": "Docker",
+    # DevOps
+    "dev ops": "DevOps", "deaf ops": "DevOps",
+    # CI/CD
+    "c i c d": "CI/CD", "si si di": "CI/CD",
+    # microservices
+    "micro services": "microservices", "micro service": "microservice",
+    # PostgreSQL
+    "post gres": "PostgreSQL", "post gray sql": "PostgreSQL",
+    "postgres ql": "PostgreSQL", "post grease ql": "PostgreSQL",
+    # MongoDB
+    "mongo db": "MongoDB", "mango db": "MongoDB",
+    # REST API
+    "rest a p i": "REST API", "restapi": "REST API",
     # other terms
     "na10": "n8n", "nato": "n8n", "n 10": "n8n",
     "random board": "random forest", "random port": "random forest",
@@ -58,7 +85,23 @@ _TERM_FIXES = {
     "data race": "data structure",
     "over feeding": "overfitting", "under feeding": "underfitting",
     "regularisation": "regularization", "normalisation": "normalization",
+    # linked list / data structures
+    "link list": "linked list", "link lists": "linked lists",
+    "hash set": "HashSet", "tree map": "TreeMap", "array list": "ArrayList",
+    # recursion
+    "re curse ion": "recursion", "re curse": "recurse",
+    # algorithm
+    "al go rhythm": "algorithm", "al go rithm": "algorithm",
 }
+
+
+# Pure thinking sounds / fillers that should not trigger processing
+_FILLER_ONLY_RE = re.compile(
+    r"^(?:uh+|um+|hmm+|ah+|err+|oh+|hm+|mm+|uh[ -]huh|yeah|yep|yup|"
+    r"right|okay|ok|so|like|well|i see|got it|sure|alright|"
+    r"let me see|let me think|i think|basically|actually)\s*[.,!?]?\s*$",
+    re.IGNORECASE,
+)
 
 
 def _fix_transcript(text: str) -> str:
@@ -217,6 +260,11 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     recording_turn = True
                     continue
 
+                # Don't process pure thinking sounds — reset and keep listening
+                if _FILLER_ONLY_RE.match(raw_answer.strip()):
+                    recording_turn = True
+                    continue
+
                 if agent_speaking:
                     await interrupt_agent()
 
@@ -232,8 +280,10 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 except Exception as _e:
                     print(f"[process_answer ERROR] {type(_e).__name__}: {_e}", flush=True)
                     processing = False
-                    recording_turn = True
-                    await jt({"type": "user_turn"})
+                    fallback = "Sorry, I didn't quite catch that — could you say that again?"
+                    await jt({"type": "transcript", "role": "agent", "text": fallback})
+                    speak_task = asyncio.create_task(speak(fallback))
+                    await speak_task
                     continue
 
                 await jt({"type": "transcript", "role": "agent", "text": response_text})
