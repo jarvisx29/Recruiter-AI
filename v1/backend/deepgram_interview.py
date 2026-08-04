@@ -18,10 +18,12 @@ TTS_URL = (
     "&container=none"
 )
 
-# Deepgram: VAD (UtteranceEnd) + final STT transcript
+# Nova-3: better technical vocabulary than Nova-2
+# utterance_end_ms=5000: 5s silence fallback for mid-thought pauses
+# Sentence-completion detection (2s after terminal punctuation) is the primary trigger
 DEEPGRAM_URL = (
     "wss://api.deepgram.com/v1/listen"
-    "?model=nova-2"
+    "?model=nova-3"
     "&language=en"
     "&encoding=linear16"
     "&sample_rate=16000"
@@ -52,7 +54,7 @@ _TERM_FIXES = {
     # GraphQL
     "greed ai": "GraphQL", "greed ql": "GraphQL", "graph ql": "GraphQL",
     "graph q l": "GraphQL", "graph cue l": "GraphQL",
-    # schema — often misheard as "scam" or "skim"
+    # schema
     "scama": "schema", "skim a": "schema", "skim ah": "schema",
     "skema": "schema", "shema": "schema",
     # policies / policy
@@ -61,18 +63,16 @@ _TERM_FIXES = {
     "cube ernetes": "Kubernetes", "cube nettles": "Kubernetes",
     "q bernetes": "Kubernetes", "kubernetes": "Kubernetes",
     "cube rnetes": "Kubernetes",
-    # Docker
+    # Docker / DevOps
     "doc ker": "Docker", "doc care": "Docker",
-    # DevOps
     "dev ops": "DevOps", "deaf ops": "DevOps",
     # CI/CD
     "c i c d": "CI/CD", "si si di": "CI/CD",
     # microservices
     "micro services": "microservices", "micro service": "microservice",
-    # PostgreSQL
+    # PostgreSQL / MongoDB
     "post gres": "PostgreSQL", "post gray sql": "PostgreSQL",
     "postgres ql": "PostgreSQL", "post grease ql": "PostgreSQL",
-    # MongoDB
     "mongo db": "MongoDB", "mango db": "MongoDB",
     # REST API
     "rest a p i": "REST API", "restapi": "REST API",
@@ -85,23 +85,22 @@ _TERM_FIXES = {
     "data race": "data structure",
     "over feeding": "overfitting", "under feeding": "underfitting",
     "regularisation": "regularization", "normalisation": "normalization",
-    # linked list / data structures
     "link list": "linked list", "link lists": "linked lists",
     "hash set": "HashSet", "tree map": "TreeMap", "array list": "ArrayList",
-    # recursion
     "re curse ion": "recursion", "re curse": "recurse",
-    # algorithm
     "al go rhythm": "algorithm", "al go rithm": "algorithm",
 }
 
-
-# Pure thinking sounds / fillers that should not trigger processing
+# Pure thinking sounds that should not trigger processing
 _FILLER_ONLY_RE = re.compile(
     r"^(?:uh+|um+|hmm+|ah+|err+|oh+|hm+|mm+|uh[ -]huh|yeah|yep|yup|"
     r"right|okay|ok|so|like|well|i see|got it|sure|alright|"
     r"let me see|let me think|i think|basically|actually)\s*[.,!?]?\s*$",
     re.IGNORECASE,
 )
+
+# Sentence-final punctuation: 2s after one of these → process (don't wait for UtteranceEnd)
+_SENTENCE_END = frozenset(".?!")
 
 
 def _fix_transcript(text: str) -> str:
@@ -126,7 +125,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
     done = asyncio.Event()
     speak_task = None
     recording_turn = False
-    dg_finals = []  # Deepgram final transcripts accumulated during user's turn
+    dg_finals = []
 
     audio_queue: asyncio.Queue = asyncio.Queue()
 
@@ -185,7 +184,6 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
     await jt({"type": "transcript", "role": "agent", "text": opening})
     speak_task = asyncio.create_task(speak(opening))
     await speak_task
-    # Override recording_turn so the 1s backlog drain doesn't pollute dg_finals
     recording_turn = False
     await jt({"type": "user_turn"})
 
@@ -222,6 +220,74 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
     async def handle_deepgram(dg_ws):
         nonlocal processing, speak_task, recording_turn
 
+        sentence_timer = None  # fires 2s after sentence-final punctuation
+
+        async def _do_process():
+            """Single entry point: process whatever is in dg_finals right now."""
+            nonlocal processing, speak_task, recording_turn
+
+            if processing or not recording_turn:
+                dg_finals.clear()
+                return
+
+            raw_answer = " ".join(dg_finals).strip()
+            dg_finals.clear()
+            recording_turn = False
+
+            if not raw_answer or len(raw_answer.split()) < 2:
+                recording_turn = True
+                return
+            if _FILLER_ONLY_RE.match(raw_answer.strip()):
+                recording_turn = True
+                return
+
+            if agent_speaking:
+                await interrupt_agent()
+
+            answer = _fix_transcript(raw_answer)
+            processing = True
+            await jt({"type": "processing"})
+            await jt({"type": "transcript", "role": "user", "text": answer})
+
+            try:
+                result = await engine.process_answer(answer)
+                response_text = result.get("response_text", "")
+            except Exception as _e:
+                print(f"[process_answer ERROR] {type(_e).__name__}: {_e}", flush=True)
+                processing = False
+                fallback = "Sorry, I didn't quite catch that — could you say that again?"
+                await jt({"type": "transcript", "role": "agent", "text": fallback})
+                speak_task = asyncio.create_task(speak(fallback))
+                await speak_task
+                return
+
+            await jt({"type": "transcript", "role": "agent", "text": response_text})
+            speak_task = asyncio.create_task(speak(response_text))
+            await speak_task
+            processing = False
+
+            if result.get("interview_complete"):
+                engine.is_interview_done = True
+                await jt({"type": "interview_complete"})
+                done.set()
+                return
+
+            await jt({"type": "user_turn"})
+
+        async def _sentence_fire():
+            """Wait 2s after sentence-final punctuation, then process."""
+            try:
+                await asyncio.sleep(2.0)
+                await _do_process()
+            except asyncio.CancelledError:
+                pass
+
+        def _cancel_sentence_timer():
+            nonlocal sentence_timer
+            if sentence_timer and not sentence_timer.done():
+                sentence_timer.cancel()
+            sentence_timer = None
+
         async for raw in dg_ws:
             if done.is_set():
                 break
@@ -235,69 +301,36 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 text = alts[0].get("transcript", "")
                 is_final = data.get("is_final", False)
 
+                # Candidate spoke while AI was talking → interrupt immediately
                 if text and agent_speaking:
                     await interrupt_agent()
                     recording_turn = True
                     dg_finals.clear()
+                    _cancel_sentence_timer()
 
                 if is_final and text and recording_turn:
-                    # Accumulate Deepgram's final transcript for this utterance
+                    # Any new final segment → cancel previous sentence timer (still talking)
+                    _cancel_sentence_timer()
                     dg_finals.append(text)
+                    # Fast path: complete sentence → start 2s confirmation window
+                    stripped = text.strip()
+                    if stripped and stripped[-1] in _SENTENCE_END and not processing:
+                        sentence_timer = asyncio.create_task(_sentence_fire())
+
                 elif not is_final and text:
+                    # Interim speech → they're still mid-sentence, cancel timer
+                    _cancel_sentence_timer()
                     await jt({"type": "interim", "text": text})
 
             elif msg_type == "UtteranceEnd":
+                # 5s silence fallback — cancel sentence timer and process now
+                _cancel_sentence_timer()
+
                 if processing or not recording_turn:
                     dg_finals.clear()
                     continue
 
-                # What Deepgram actually heard — same source as the live transcript
-                raw_answer = " ".join(dg_finals).strip()
-                dg_finals.clear()
-                recording_turn = False
-
-                if not raw_answer or len(raw_answer.split()) < 2:
-                    recording_turn = True
-                    continue
-
-                # Don't process pure thinking sounds — reset and keep listening
-                if _FILLER_ONLY_RE.match(raw_answer.strip()):
-                    recording_turn = True
-                    continue
-
-                if agent_speaking:
-                    await interrupt_agent()
-
-                answer = _fix_transcript(raw_answer)
-
-                processing = True
-                await jt({"type": "processing"})
-                await jt({"type": "transcript", "role": "user", "text": answer})
-
-                try:
-                    result = await engine.process_answer(answer)
-                    response_text = result.get("response_text", "")
-                except Exception as _e:
-                    print(f"[process_answer ERROR] {type(_e).__name__}: {_e}", flush=True)
-                    processing = False
-                    fallback = "Sorry, I didn't quite catch that — could you say that again?"
-                    await jt({"type": "transcript", "role": "agent", "text": fallback})
-                    speak_task = asyncio.create_task(speak(fallback))
-                    await speak_task
-                    continue
-
-                await jt({"type": "transcript", "role": "agent", "text": response_text})
-                speak_task = asyncio.create_task(speak(response_text))
-                await speak_task
-                processing = False
-
-                if result.get("interview_complete"):
-                    engine.is_interview_done = True
-                    await jt({"type": "interview_complete"})
-                    done.set()
-                    return
-
-                await jt({"type": "user_turn"})
+                await _do_process()
 
     # ── connect Deepgram and run ──────────────────────────────────────────────
     dg_headers = [("Authorization", f"Token {DEEPGRAM_API_KEY}")]
