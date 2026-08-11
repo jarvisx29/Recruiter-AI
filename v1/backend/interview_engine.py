@@ -1,4 +1,4 @@
-from openai import AsyncOpenAI
+from anthropic import AsyncAnthropic
 import json
 import re
 import os
@@ -6,7 +6,7 @@ import os
 
 def _parse_json(text: str) -> dict:
     """Extract JSON from model output — handles raw JSON or ```json blocks."""
-    if text is None:
+    if not text:
         raise ValueError("Model returned empty content")
     text = text.strip()
     match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
@@ -15,11 +15,8 @@ def _parse_json(text: str) -> dict:
     return json.loads(text)
 
 
-client = AsyncOpenAI(
-    api_key=os.getenv("CEREBRAS_API_KEY"),
-    base_url="https://api.cerebras.ai/v1",
-)
-_MODEL = "gemma-4-31b"  # non-reasoning model: consistent ~60ms, no variable reasoning overhead
+client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+_MODEL = "claude-haiku-4-5-20251001"
 
 DEPTH_LABELS = {1: "surface", 2: "intermediate", 3: "deep"}
 
@@ -103,14 +100,15 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
     "first_topic": "DSA & Problem Solving"
 }}"""
 
-        response = await client.chat.completions.create(
+        response = await client.messages.create(
             model=_MODEL,
-            messages=[{"role": "system", "content": plan_prompt}],
+            system=plan_prompt,
+            messages=[{"role": "user", "content": "Begin the interview."}],
             temperature=0.7,
-            max_tokens=600,
+            max_tokens=1024,
         )
 
-        plan = _parse_json(response.choices[0].message.content)
+        plan = _parse_json(response.content[0].text)
         self.interview_plan = plan
         self.topics_remaining = list(plan["topics"])
         self.current_topic = plan["first_topic"]
@@ -122,12 +120,9 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
 
     async def process_answer(self, candidate_answer: str) -> dict:
         self.conversation_history.append({"role": "user", "content": candidate_answer})
-        # Only count as a real exchange if it's a substantive answer (3+ words)
-        # Short utterances like "Hello?" or "I see" don't consume exchange slots
         if len(candidate_answer.split()) >= 3:
             self.exchanges_on_topic += 1
 
-        # What topic comes next (so LLM knows exactly what to transition to)
         next_topic_hint = self.topics_remaining[0] if self.topics_remaining else "none — wrap up"
 
         system_prompt = f"""You are RecruiterAI, a warm and professional Voice AI interviewer for SRM Placements. {self.candidate_name} is applying for: {self.position}.
@@ -143,16 +138,27 @@ INTERVIEW STATE:
 CANDIDATE PROFILE:
 {self.resume_summary}
 
+HOW TO USE THE PROFILE:
+- In DSA/SQL/Debugging topics: tie at least one question to their actual tech stack. E.g. if they know Python, ask "How would you do this in Python?" or "You listed SQL as a skill — walk me through...".
+- In Projects topic: ALWAYS open by naming their actual project. E.g. "Earlier you mentioned your AI Recruitment Pipeline — walk me through a specific technical challenge you hit and how you solved it." Probe WHY they made specific choices (language, library, architecture).
+- Never ask generic questions when their profile gives you something specific to probe.
+
 CONVERSATION STYLE:
-- response_text under 50 words. One question only. No lectures, no preamble.
-- Begin with varied acknowledgment: "I see." / "Got it." / "Alright." / "Okay." / "Sure." — never repeat the same one twice in a row.
-- Warm, recruiter-like tone. THIS IS A VOICE INTERVIEW — no writing/typing questions.
-- When moving to a new topic, include the first question of that NEW topic in the SAME response.
+- response_text 40-70 words. One question only. Sound like a real, friendly interviewer.
+- Open with a WARM, varied reaction — not a single filler word. Examples:
+    "Nice thinking! Let's push that a bit further —"
+    "That's a solid start — I like how you're thinking about it. Let me ask you this:"
+    "Great, that makes sense! Now here's a trickier angle:"
+    "Okay, good instinct! One follow-up:"
+    "Exactly right — hash sets are perfect here. Let me dig a little deeper:"
+  Vary it every response. Never say just "I see." or "Got it." alone.
+- Warm, encouraging, recruiter-like tone. THIS IS A VOICE INTERVIEW.
+- When moving to a new topic, briefly signal it: "Let's shift gears now." or "Moving on — " then ask the first question of the new topic.
 
 PATIENCE RULES:
-- Incomplete answer → "Would you like to add anything?" action: simplify, depth_change: 0.
+- Incomplete answer → sound encouraging, e.g. "No worries, take your time — could you walk me through even just the first step you'd take?" action: simplify, depth_change: 0.
 - Fillers and thinking out loud are normal — do not penalise.
-- "I don't know" → acknowledge, offer ONE gentle chance, then move on.
+- "I don't know" → give a concrete hint first, e.g. "That's okay! Here's a clue — think about what tool you'd open first. What would you check?" action: simplify, depth_change: -1. Only move on if they say "I don't know" a SECOND time.
 
 DECISION RULES:
 1. DEPTH UP: Strong correct answer → harder follow-up on SAME topic. action: go_deeper, depth_change: 1.
@@ -163,24 +169,31 @@ DECISION RULES:
 
 Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
 {{
-    "response_text": "Spoken words — under 50 words, one question only",
+    "response_text": "Spoken words — under 70 words, one question only",
     "action": "go_deeper" | "simplify" | "next_topic" | "bluff_called" | "wrap_up",
     "topic_score": 1-10,
     "depth_change": -1 or 0 or 1,
     "reasoning": "brief note"
 }}"""
 
-        response = await client.chat.completions.create(
-            model=_MODEL,
-            messages=[
-                {"role": "system", "content": system_prompt},
-                *self.conversation_history[-12:]
-            ],
-            max_tokens=500,
-            temperature=0.7,
-        )
-
-        result = _parse_json(response.choices[0].message.content)
+        result = None
+        last_err = None
+        for _attempt in range(3):
+            try:
+                response = await client.messages.create(
+                    model=_MODEL,
+                    system=system_prompt,
+                    messages=self.conversation_history[-12:],
+                    max_tokens=1024,
+                    temperature=0.7,
+                )
+                result = _parse_json(response.content[0].text)
+                break
+            except (ValueError, Exception) as _e:
+                last_err = _e
+                print(f"[process_answer retry {_attempt+1}] {type(_e).__name__}: {_e}", flush=True)
+        if result is None:
+            raise last_err
 
         raw_depth = result.get("depth_change", 0)
         depth_change = int(raw_depth) if isinstance(raw_depth, (int, float)) else 0
