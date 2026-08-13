@@ -263,7 +263,14 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
 
             await jt({"type": "transcript", "role": "agent", "text": response_text})
             speak_task = asyncio.create_task(speak(response_text))
-            await speak_task
+            try:
+                await speak_task
+            except asyncio.CancelledError:
+                # speak was cancelled externally (e.g. barge-in) — reset cleanly
+                agent_speaking = False
+                recording_turn = True
+                processing = False
+                return
             processing = False
 
             if result.get("interview_complete"):
@@ -284,6 +291,10 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
 
         def _cancel_sentence_timer():
             nonlocal sentence_timer
+            # Never cancel while _do_process is running — it would raise
+            # CancelledError inside the task and leave processing=True stuck.
+            if processing:
+                return
             if sentence_timer and not sentence_timer.done():
                 sentence_timer.cancel()
             sentence_timer = None
@@ -323,13 +334,15 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     await jt({"type": "interim", "text": text})
 
             elif msg_type == "UtteranceEnd":
-                # 5s silence fallback — cancel sentence timer and process now
-                _cancel_sentence_timer()
-
+                # 5s silence fallback — but only act if not already processing.
+                # Must check processing BEFORE cancelling: if sentence_timer is
+                # mid-_do_process, cancelling it kills the task and leaves
+                # processing=True stuck forever.
                 if processing or not recording_turn:
                     dg_finals.clear()
                     continue
 
+                _cancel_sentence_timer()
                 await _do_process()
 
     # ── connect Deepgram and run ──────────────────────────────────────────────
