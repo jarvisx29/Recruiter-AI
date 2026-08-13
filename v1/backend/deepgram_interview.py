@@ -138,31 +138,36 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
         recording_turn = False
         dg_finals.clear()
 
-        await jt({"type": "agent_start_talking"})
-        await jt({"type": "audio_start", "sampleRate": TTS_SAMPLE_RATE})
-
         try:
-            async with httpx.AsyncClient(timeout=30) as http:
-                async with http.stream(
-                    "POST", TTS_URL,
-                    headers={
-                        "Authorization": f"Token {DEEPGRAM_API_KEY}",
-                        "Content-Type": "application/json",
-                    },
-                    json={"text": text},
-                ) as resp:
-                    async for chunk in resp.aiter_bytes(chunk_size=4096):
-                        await browser_ws.send_bytes(chunk)
-        except asyncio.CancelledError:
-            pass
-        except Exception as _e:
-            print(f"[speak ERROR] {type(_e).__name__}: {_e}", flush=True)
+            await jt({"type": "agent_start_talking"})
+            await jt({"type": "audio_start", "sampleRate": TTS_SAMPLE_RATE})
 
-        await jt({"type": "audio_end"})
-        await jt({"type": "agent_stop_talking"})
-        agent_speaking = False
-        dg_finals.clear()
-        recording_turn = True
+            try:
+                async with httpx.AsyncClient(timeout=30) as http:
+                    async with http.stream(
+                        "POST", TTS_URL,
+                        headers={
+                            "Authorization": f"Token {DEEPGRAM_API_KEY}",
+                            "Content-Type": "application/json",
+                        },
+                        json={"text": text},
+                    ) as resp:
+                        async for chunk in resp.aiter_bytes(chunk_size=4096):
+                            await browser_ws.send_bytes(chunk)
+            except asyncio.CancelledError:
+                raise
+            except Exception as _e:
+                print(f"[speak ERROR] {type(_e).__name__}: {_e}", flush=True)
+
+            await jt({"type": "audio_end"})
+            await jt({"type": "agent_stop_talking"})
+        except asyncio.CancelledError:
+            raise
+        finally:
+            # Always reset — even when cancelled, so agent_speaking never gets stuck
+            agent_speaking = False
+            dg_finals.clear()
+            recording_turn = True
 
     async def interrupt_agent():
         nonlocal speak_task
@@ -259,6 +264,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 await jt({"type": "transcript", "role": "agent", "text": fallback})
                 speak_task = asyncio.create_task(speak(fallback))
                 await speak_task
+                await jt({"type": "user_turn"})
                 return
 
             await jt({"type": "transcript", "role": "agent", "text": response_text})
