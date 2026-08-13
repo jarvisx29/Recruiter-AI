@@ -224,7 +224,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
 
         async def _do_process():
             """Single entry point: process whatever is in dg_finals right now."""
-            nonlocal processing, speak_task, recording_turn
+            nonlocal processing, speak_task, recording_turn, agent_speaking
 
             if processing or not recording_turn:
                 dg_finals.clear()
