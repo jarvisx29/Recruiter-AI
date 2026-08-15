@@ -28,7 +28,7 @@ DEEPGRAM_URL = (
     "&encoding=linear16"
     "&sample_rate=16000"
     "&channels=1"
-    "&endpointing=500"
+    "&endpointing=300"
     "&interim_results=true"
     "&utterance_end_ms=5000"
     "&smart_format=true"
@@ -288,9 +288,9 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
             await jt({"type": "user_turn"})
 
         async def _sentence_fire():
-            """Wait 2s after sentence-final punctuation, then process."""
+            """Wait 1.5s after sentence-final punctuation, then process."""
             try:
-                await asyncio.sleep(2.0)
+                await asyncio.sleep(1.5)
                 await _do_process()
             except asyncio.CancelledError:
                 pass
@@ -334,8 +334,10 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     if stripped and stripped[-1] in _SENTENCE_END and not processing:
                         sentence_timer = asyncio.create_task(_sentence_fire())
 
-                elif not is_final and text:
-                    # Interim speech → they're still mid-sentence, cancel timer
+                elif not is_final and text and not processing:
+                    # Interim speech → they're still mid-sentence, cancel timer.
+                    # Skip during processing: text would appear then vanish on UtteranceEnd,
+                    # making the user think the system is ignoring them.
                     _cancel_sentence_timer()
                     await jt({"type": "interim", "text": text})
 
