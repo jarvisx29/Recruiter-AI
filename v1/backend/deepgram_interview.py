@@ -2,8 +2,11 @@ import asyncio
 import json
 import os
 import re
+import urllib.request
 
 import httpx
+import numpy as np
+import onnxruntime as ort
 import websockets
 from fastapi import WebSocket
 
@@ -33,6 +36,101 @@ DEEPGRAM_URL = (
     "&utterance_end_ms=5000"
     "&smart_format=true"
 )
+
+# ── Silero VAD ────────────────────────────────────────────────────────────────
+_VAD_MODEL_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "silero_vad.onnx")
+_VAD_MODEL_URL = (
+    "https://raw.githubusercontent.com/snakers4/silero-vad/"
+    "master/src/silero_vad/data/silero_vad.onnx"
+)
+_vad_ort_session = None
+
+
+def _load_vad():
+    global _vad_ort_session
+    if _vad_ort_session is not None:
+        return _vad_ort_session
+    try:
+        if not os.path.exists(_VAD_MODEL_PATH):
+            print("[VAD] Downloading Silero VAD model (~2 MB)...", flush=True)
+            urllib.request.urlretrieve(_VAD_MODEL_URL, _VAD_MODEL_PATH)
+        _vad_ort_session = ort.InferenceSession(
+            _VAD_MODEL_PATH, providers=["CPUExecutionProvider"]
+        )
+        print("[VAD] Silero VAD loaded.", flush=True)
+    except Exception as _e:
+        print(f"[VAD] Unavailable ({_e}) — sentence-timer fallback active.", flush=True)
+    return _vad_ort_session
+
+
+class SileroVAD:
+    """Per-session Silero VAD v4. Processes 16 kHz PCM16 in 32 ms (512-sample) chunks."""
+
+    _SPEECH_THRESH   = 0.5
+    _SPEECH_CONFIRM  = 3    # ≥3 consecutive speech frames  (~96 ms)  → speech started
+    _SILENCE_CONFIRM = 6    # ≥6 consecutive silence frames (~192 ms) → speech ended
+    _CHUNK           = 1024  # 512 samples × 2 bytes
+
+    def __init__(self):
+        self._sess   = _load_vad()
+        self._buf    = b""
+        self._h      = np.zeros((2, 1, 64), dtype=np.float32)
+        self._c      = np.zeros((2, 1, 64), dtype=np.float32)
+        self._sf     = 0      # consecutive speech frames
+        self._lf     = 0      # consecutive silence frames
+        self._active = False
+
+    def reset(self):
+        self._buf    = b""
+        self._h      = np.zeros((2, 1, 64), dtype=np.float32)
+        self._c      = np.zeros((2, 1, 64), dtype=np.float32)
+        self._sf     = 0
+        self._lf     = 0
+        self._active = False
+
+    def feed(self, raw: bytes) -> list:
+        """Feed raw PCM16 bytes. Returns events: 'speech_start' / 'speech_end'."""
+        if self._sess is None:
+            return []
+        events = []
+        self._buf += raw
+        while len(self._buf) >= self._CHUNK:
+            chunk, self._buf = self._buf[:self._CHUNK], self._buf[self._CHUNK:]
+            ev = self._infer(chunk)
+            if ev:
+                events.append(ev)
+        return events
+
+    def _infer(self, chunk: bytes):
+        x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
+        out, self._h, self._c = self._sess.run(
+            None,
+            {
+                "input": x[np.newaxis, :],
+                "sr":    np.array(16000, dtype=np.int64),
+                "h":     self._h,
+                "c":     self._c,
+            },
+        )
+        p = float(out[0][0])
+        if p >= self._SPEECH_THRESH:
+            self._lf = 0
+            self._sf += 1
+            if not self._active and self._sf >= self._SPEECH_CONFIRM:
+                self._active = True
+                return "speech_start"
+        else:
+            self._sf = 0
+            if self._active:
+                self._lf += 1
+                if self._lf >= self._SILENCE_CONFIRM:
+                    self._active = False
+                    self._lf = 0
+                    return "speech_end"
+        return None
+
+
+_load_vad()  # pre-load at startup, not on first request
 
 # Known STT mishearings → correct technical terms
 _TERM_FIXES = {
@@ -128,6 +226,8 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
     dg_finals = []
 
     audio_queue: asyncio.Queue = asyncio.Queue()
+    vad_done = [False]  # [0]=True when Silero VAD detected end-of-speech for current turn
+    vad = SileroVAD()   # per-session neural VAD state
 
     async def jt(data: dict):
         await browser_ws.send_json(data)
@@ -168,6 +268,8 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
             agent_speaking = False
             dg_finals.clear()
             recording_turn = True
+            vad.reset()       # fresh LSTM state for user's next utterance
+            vad_done[0] = False
 
     async def interrupt_agent():
         nonlocal speak_task
@@ -217,6 +319,13 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 continue
             if chunk is None:
                 break
+            # Run Silero VAD on incoming audio — only while listening for user speech
+            if recording_turn and not agent_speaking and not processing:
+                for ev in vad.feed(chunk):
+                    if ev == "speech_end":
+                        vad_done[0] = True          # user stopped speaking
+                    elif ev == "speech_start":
+                        vad_done[0] = False         # mid-pause continuation — reset
             try:
                 await dg_ws.send(chunk)
             except Exception:
@@ -288,9 +397,15 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
             await jt({"type": "user_turn"})
 
         async def _sentence_fire():
-            """Wait 1.5s after sentence-final punctuation, then process."""
+            """Wait for Silero VAD end-of-speech or fall back to 1.5 s, then process."""
             try:
-                await asyncio.sleep(1.5)
+                # Poll every 50 ms — exits early when VAD confirms user has stopped speaking.
+                # Typical exit: ~50–200 ms after Deepgram sends is_final.
+                # Worst case (no VAD signal): full 1.5 s (same as before).
+                for _ in range(30):
+                    await asyncio.sleep(0.05)
+                    if vad_done[0]:
+                        break
                 await _do_process()
             except asyncio.CancelledError:
                 pass
