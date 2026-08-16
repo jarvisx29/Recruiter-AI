@@ -226,7 +226,8 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
     dg_finals = []
 
     audio_queue: asyncio.Queue = asyncio.Queue()
-    vad_done = [False]  # [0]=True when Silero VAD detected end-of-speech for current turn
+    vad_done      = [False]  # [0]=True when Silero VAD detected end-of-speech for current turn
+    post_interrupt = [False]  # [0]=True when agent was interrupted mid-speech
     vad = SileroVAD()   # per-session neural VAD state
 
     async def jt(data: dict):
@@ -354,6 +355,35 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
             dg_finals.clear()
             recording_turn = False
 
+            # Agent was interrupted — skip LLM, repeat the question instead
+            if post_interrupt[0]:
+                post_interrupt[0] = False
+                last_agent = next(
+                    (m["content"] for m in reversed(engine.conversation_history)
+                     if m.get("role") == "assistant"),
+                    None,
+                )
+                if last_agent:
+                    parts = re.split(r"(?<=[.!?])\s+", last_agent.strip())
+                    qs = [p for p in parts if p.rstrip().endswith("?")]
+                    question = qs[-1] if qs else (parts[-1] if parts else last_agent)
+                    if len(question) <= 120:
+                        recovery = f"Sorry about that! Did you catch my question? I asked: {question}"
+                    else:
+                        recovery = "Sorry about that! Did you catch my question? Let me know and I'll repeat it."
+                else:
+                    recovery = "Sorry about that! Did you catch my question? Take your time and answer whenever you're ready."
+                await jt({"type": "transcript", "role": "agent", "text": recovery})
+                speak_task = asyncio.create_task(speak(recovery))
+                try:
+                    await speak_task
+                except asyncio.CancelledError:
+                    agent_speaking = False
+                    recording_turn = True
+                    return
+                await jt({"type": "user_turn"})
+                return
+
             if not raw_answer or len(raw_answer.split()) < 2:
                 recording_turn = True
                 return
@@ -446,6 +476,7 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     recording_turn = True
                     dg_finals.clear()
                     _cancel_sentence_timer()
+                    post_interrupt[0] = True
 
                 if is_final and text and recording_turn:
                     # Any new final segment → replace previous sentence timer
