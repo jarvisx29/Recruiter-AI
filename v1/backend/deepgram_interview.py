@@ -321,11 +321,16 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 break
             # Run Silero VAD on incoming audio — only while listening for user speech
             if recording_turn and not agent_speaking and not processing:
-                for ev in vad.feed(chunk):
-                    if ev == "speech_end":
-                        vad_done[0] = True          # user stopped speaking
-                    elif ev == "speech_start":
-                        vad_done[0] = False         # mid-pause continuation — reset
+                try:
+                    for ev in vad.feed(chunk):
+                        if ev == "speech_end":
+                            vad_done[0] = True      # user stopped speaking
+                        elif ev == "speech_start":
+                            vad_done[0] = False     # mid-pause continuation — reset
+                except Exception as _vad_err:
+                    # Disable VAD for this session — sentence timer fallback takes over
+                    print(f"[VAD] disabled after error: {_vad_err}", flush=True)
+                    vad._sess = None
             try:
                 await dg_ws.send(chunk)
             except Exception:
