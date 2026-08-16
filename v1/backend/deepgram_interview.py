@@ -68,7 +68,7 @@ class SileroVAD:
 
     _SPEECH_THRESH   = 0.5
     _SPEECH_CONFIRM  = 3    # ≥3 consecutive speech frames  (~96 ms)  → speech started
-    _SILENCE_CONFIRM = 6    # ≥6 consecutive silence frames (~192 ms) → speech ended
+    _SILENCE_CONFIRM = 15   # ≥15 consecutive silence frames (~480 ms) → speech ended
     _CHUNK           = 1024  # 512 samples × 2 bytes
 
     def __init__(self):
@@ -405,12 +405,14 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
         async def _sentence_fire():
             """Wait for Silero VAD end-of-speech or fall back to 1.5 s, then process."""
             try:
-                # Check BEFORE sleeping: if VAD already fired, process immediately.
-                # Otherwise poll every 50 ms up to 1.5 s.
+                # Sleep FIRST (50 ms debounce) — gives interims a chance to cancel this
+                # timer if the user keeps talking, before we act on the VAD signal.
+                # VAD fires at ≥480 ms of silence; endpointing fires at 300 ms.
+                # Typical flow: timer starts at 300 ms, polls until ~500 ms when VAD fires.
                 for _ in range(30):
+                    await asyncio.sleep(0.05)
                     if vad_done[0]:
                         break
-                    await asyncio.sleep(0.05)
                 await _do_process()
             except asyncio.CancelledError:
                 pass
