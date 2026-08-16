@@ -324,9 +324,10 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 try:
                     for ev in vad.feed(chunk):
                         if ev == "speech_end":
-                            vad_done[0] = True      # user stopped speaking
+                            vad_done[0] = True
+                            print("[VAD] speech_end", flush=True)
                         elif ev == "speech_start":
-                            vad_done[0] = False     # mid-pause continuation — reset
+                            vad_done[0] = False
                 except Exception as _vad_err:
                     # Disable VAD for this session — sentence timer fallback takes over
                     print(f"[VAD] disabled after error: {_vad_err}", flush=True)
@@ -404,13 +405,12 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
         async def _sentence_fire():
             """Wait for Silero VAD end-of-speech or fall back to 1.5 s, then process."""
             try:
-                # Poll every 50 ms — exits early when VAD confirms user has stopped speaking.
-                # Typical exit: ~50–200 ms after Deepgram sends is_final.
-                # Worst case (no VAD signal): full 1.5 s (same as before).
+                # Check BEFORE sleeping: if VAD already fired, process immediately.
+                # Otherwise poll every 50 ms up to 1.5 s.
                 for _ in range(30):
-                    await asyncio.sleep(0.05)
                     if vad_done[0]:
                         break
+                    await asyncio.sleep(0.05)
                 await _do_process()
             except asyncio.CancelledError:
                 pass
@@ -446,15 +446,14 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     _cancel_sentence_timer()
 
                 if is_final and text and recording_turn:
-                    # Any new final segment → cancel previous sentence timer (still talking)
+                    # Any new final segment → replace previous sentence timer
                     _cancel_sentence_timer()
                     dg_finals.append(text)
-                    stripped = text.strip()
-                    ends_sentence = bool(stripped and stripped[-1] in _SENTENCE_END)
-                    # Fire timer when: terminal punctuation OR VAD already confirmed silence
-                    # VAD fires ~150ms after last word; Deepgram is_final fires ~300ms.
-                    # So vad_done[0] is usually True by the time is_final arrives.
-                    if not processing and (ends_sentence or vad_done[0]):
+                    # Always start timer on every final — timer polls VAD and exits early
+                    # if VAD already confirmed silence (typically ~50ms after is_final).
+                    # Fallback if VAD disabled: 1.5s timer (vs 5s UtteranceEnd before).
+                    # If user keeps talking, the next interim/final cancels this timer.
+                    if not processing:
                         sentence_timer = asyncio.create_task(_sentence_fire())
 
                 elif not is_final and text and not processing:
