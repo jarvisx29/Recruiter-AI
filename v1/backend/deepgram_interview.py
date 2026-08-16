@@ -449,9 +449,12 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                     # Any new final segment → cancel previous sentence timer (still talking)
                     _cancel_sentence_timer()
                     dg_finals.append(text)
-                    # Fast path: complete sentence → start 2s confirmation window
                     stripped = text.strip()
-                    if stripped and stripped[-1] in _SENTENCE_END and not processing:
+                    ends_sentence = bool(stripped and stripped[-1] in _SENTENCE_END)
+                    # Fire timer when: terminal punctuation OR VAD already confirmed silence
+                    # VAD fires ~150ms after last word; Deepgram is_final fires ~300ms.
+                    # So vad_done[0] is usually True by the time is_final arrives.
+                    if not processing and (ends_sentence or vad_done[0]):
                         sentence_timer = asyncio.create_task(_sentence_fire())
 
                 elif not is_final and text and not processing:
