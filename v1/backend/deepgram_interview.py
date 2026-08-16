@@ -54,20 +54,22 @@ _VAD_MODEL_URL  = (
     "master/src/silero_vad/data/silero_vad.onnx"
 )
 _vad_ort_session = None
+_vad_model_ver   = 4  # detected at load time: 4 = h/c inputs, 5 = state input
 
 
 def _load_vad():
-    global _vad_ort_session
+    global _vad_ort_session, _vad_model_ver
     if _vad_ort_session is not None:
         return _vad_ort_session
     try:
         if not os.path.exists(_VAD_MODEL_PATH):
             print("[VAD] Downloading Silero VAD model …", flush=True)
             urllib.request.urlretrieve(_VAD_MODEL_URL, _VAD_MODEL_PATH)
-        _vad_ort_session = ort.InferenceSession(
-            _VAD_MODEL_PATH, providers=["CPUExecutionProvider"]
-        )
-        print("[VAD] Silero VAD loaded.", flush=True)
+        sess = ort.InferenceSession(_VAD_MODEL_PATH, providers=["CPUExecutionProvider"])
+        inp_names = {i.name for i in sess.get_inputs()}
+        _vad_model_ver = 5 if "state" in inp_names else 4
+        _vad_ort_session = sess
+        print(f"[VAD] Silero VAD v{_vad_model_ver} loaded (inputs: {inp_names}).", flush=True)
     except Exception as e:
         print(f"[VAD] Unavailable ({e}) — sentence-timer fallback active.", flush=True)
     return _vad_ort_session
@@ -76,22 +78,26 @@ def _load_vad():
 class SileroVAD:
     _SPEECH_THRESH   = 0.5
     _SPEECH_CONFIRM  = 3    # ≥3 consecutive frames (~96 ms)  → speech started
-    _SILENCE_CONFIRM = 15   # ≥15 consecutive frames (~480 ms) → speech ended
+    _SILENCE_CONFIRM = 10   # ≥10 consecutive frames (~320 ms) → speech ended
     _CHUNK           = 1024  # 512 samples × 2 bytes (32 ms @ 16 kHz)
 
     def __init__(self):
         self._sess   = _load_vad()
         self._buf    = b""
-        self._h      = np.zeros((2, 1, 64), dtype=np.float32)
-        self._c      = np.zeros((2, 1, 64), dtype=np.float32)
+        # v4 state tensors
+        self._h      = np.zeros((2, 1, 64),  dtype=np.float32)
+        self._c      = np.zeros((2, 1, 64),  dtype=np.float32)
+        # v5 state tensor
+        self._state  = np.zeros((2, 1, 128), dtype=np.float32)
         self._sf     = 0
         self._lf     = 0
         self._active = False
 
     def reset(self):
         self._buf    = b""
-        self._h      = np.zeros((2, 1, 64), dtype=np.float32)
-        self._c      = np.zeros((2, 1, 64), dtype=np.float32)
+        self._h      = np.zeros((2, 1, 64),  dtype=np.float32)
+        self._c      = np.zeros((2, 1, 64),  dtype=np.float32)
+        self._state  = np.zeros((2, 1, 128), dtype=np.float32)
         self._sf = self._lf = 0
         self._active = False
 
@@ -109,13 +115,27 @@ class SileroVAD:
 
     def _infer(self, chunk: bytes):
         x = np.frombuffer(chunk, dtype=np.int16).astype(np.float32) / 32768.0
-        out, self._h, self._c = self._sess.run(
-            None,
-            {"input": x[np.newaxis, :],
-             "sr":    np.array(16000, dtype=np.int64),
-             "h":     self._h, "c": self._c},
-        )
-        p = float(out[0][0])
+        if _vad_model_ver == 5:
+            outs = self._sess.run(
+                None,
+                {"input": x[np.newaxis, :],
+                 "sr":    np.array(16000, dtype=np.int64),
+                 "state": self._state},
+            )
+            p = float(outs[0].flatten()[0])
+            self._state = outs[1]
+        else:
+            outs = self._sess.run(
+                None,
+                {"input": x[np.newaxis, :],
+                 "sr":    np.array(16000, dtype=np.int64),
+                 "h":     self._h,
+                 "c":     self._c},
+            )
+            p = float(outs[0].flatten()[0])
+            self._h = outs[1]
+            self._c = outs[2]
+
         if p >= self._SPEECH_THRESH:
             self._lf = 0
             self._sf += 1
@@ -412,8 +432,8 @@ async def run_session(browser_ws: WebSocket, engine) -> None:
                 continue
             if chunk is None:
                 break
-            # Feed VAD only while actively listening (state == LISTENING)
-            if state == S.LISTENING:
+            # Feed VAD while listening or after a barge-in (to detect when user finishes)
+            if state in (S.LISTENING, S.INTERRUPTED):
                 try:
                     for ev in vad.feed(chunk):
                         if ev == "speech_end":

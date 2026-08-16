@@ -5,14 +5,24 @@ import os
 
 
 def _parse_json(text: str) -> dict:
-    """Extract JSON from model output — handles raw JSON or ```json blocks."""
+    """Extract JSON from model output — handles raw JSON, ```json blocks, and embedded JSON."""
     if not text:
         raise ValueError("Model returned empty content")
     text = text.strip()
+    # Try ```json block first
     match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
     if match:
-        text = match.group(1)
-    return json.loads(text)
+        return json.loads(match.group(1))
+    # Try raw JSON
+    try:
+        return json.loads(text)
+    except json.JSONDecodeError:
+        pass
+    # Extract outermost JSON object from free text
+    match = re.search(r'\{[\s\S]*\}', text)
+    if match:
+        return json.loads(match.group(0))
+    raise ValueError(f"No valid JSON in model response: {text[:200]}")
 
 
 client = AsyncAnthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
@@ -193,6 +203,12 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
                 last_err = _e
                 print(f"[process_answer retry {_attempt+1}] {type(_e).__name__}: {_e}", flush=True)
         if result is None:
+            # Undo the user message we appended — prevents consecutive user messages
+            # in history that cause all future LLM calls to also fail.
+            if (self.conversation_history
+                    and self.conversation_history[-1].get("role") == "user"
+                    and self.conversation_history[-1].get("content") == candidate_answer):
+                self.conversation_history.pop()
             raise last_err
 
         raw_depth = result.get("depth_change", 0)
