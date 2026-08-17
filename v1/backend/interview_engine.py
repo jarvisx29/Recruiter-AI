@@ -113,12 +113,15 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
         response = await client.messages.create(
             model=_MODEL,
             system=plan_prompt,
-            messages=[{"role": "user", "content": "Begin the interview."}],
+            messages=[
+                {"role": "user", "content": "Begin the interview."},
+                {"role": "assistant", "content": "{"},
+            ],
             temperature=0.7,
             max_tokens=1024,
         )
 
-        plan = _parse_json(response.content[0].text)
+        plan = _parse_json("{" + (response.content[0].text or ""))
         self.interview_plan = plan
         self.topics_remaining = list(plan["topics"])
         self.current_topic = plan["first_topic"]
@@ -193,11 +196,11 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
                 response = await client.messages.create(
                     model=_MODEL,
                     system=system_prompt,
-                    messages=self.conversation_history[-12:],
+                    messages=self.conversation_history[-12:] + [{"role": "assistant", "content": "{"}],
                     max_tokens=1024,
                     temperature=0.7,
                 )
-                result = _parse_json(response.content[0].text)
+                result = _parse_json("{" + (response.content[0].text or ""))
                 break
             except (ValueError, Exception) as _e:
                 last_err = _e
