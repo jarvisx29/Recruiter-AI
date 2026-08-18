@@ -3,6 +3,13 @@ import json
 import re
 import os
 
+_IDK_RE = re.compile(
+    r"\b(i don'?t know|no idea|not sure|can'?t answer|have no clue|no clue|"
+    r"i'?m not sure|i give up|i'?m lost|don'?t understand|have no idea|"
+    r"cannot answer|not familiar|never (heard|learned|studied)|blank)\b",
+    re.IGNORECASE,
+)
+
 
 def _parse_json(text: str) -> dict:
     """Extract JSON from model output — handles raw JSON, ```json blocks, and embedded JSON."""
@@ -80,6 +87,9 @@ class InterviewEngine:
         self.exchanges_on_topic = 0
         self.face_embedding = None
         self._saved_to_admin = False
+        self.topic_idk_count = 0      # "I don't know" count for current topic
+        self.topic_simplify_count = 0  # depth-down moves for current topic
+        self.topic_depth_peaked = False  # whether depth ever increased on this topic
 
     def _build_resume_summary(self, r: dict) -> str:
         parts = []
@@ -135,6 +145,8 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
         self.conversation_history.append({"role": "user", "content": candidate_answer})
         if len(candidate_answer.split()) >= 3:
             self.exchanges_on_topic += 1
+        if _IDK_RE.search(candidate_answer):
+            self.topic_idk_count += 1
 
         next_topic_hint = self.topics_remaining[0] if self.topics_remaining else "none — wrap up"
 
@@ -180,6 +192,14 @@ DECISION RULES:
    → Your response_text MUST ask the first question for "{next_topic_hint}" — NOT any other topic.
 4. WRAP UP: ONLY when Topics remaining is empty. action: wrap_up.
 
+STRICT SCORING RUBRIC — topic_score must reflect actual performance, not effort or politeness:
+- 9-10: Unprompted depth, explains tradeoffs and edge cases, correct approach with no hints
+- 7-8: Correct approach with some depth, minor gaps, handled follow-ups well, no IDK
+- 5-6: Partial understanding, needed one hint, direction correct but missing key details
+- 3-4: Vague or partially wrong, needed multiple hints or simplifications to stay engaged
+- 1-2: Said "I don't know", gave up, completely off-track even after hints
+A friendly "I don't know" is STILL a 2. Effort and politeness do NOT raise the score.
+
 Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
 {{
     "response_text": "Spoken words — under 70 words, one question only",
@@ -216,6 +236,10 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
 
         raw_depth = result.get("depth_change", 0)
         depth_change = int(raw_depth) if isinstance(raw_depth, (int, float)) else 0
+        if depth_change > 0:
+            self.topic_depth_peaked = True
+        if depth_change < 0:
+            self.topic_simplify_count += 1
         self.current_depth = max(1, min(3, self.current_depth + depth_change))
         action = result.get("action")
 
@@ -233,13 +257,32 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
         if action in ["next_topic", "bluff_called", "wrap_up"]:
             raw_score = result.get("topic_score", 5)
             score = int(raw_score) if isinstance(raw_score, (int, float)) else 5
+
+            # Hard caps based on observed IDK count — LLM scores tend to be generous
+            if self.topic_idk_count >= 2:
+                score = min(score, 3)
+            elif self.topic_idk_count == 1:
+                score = min(score, 5)
+            # Penalise if depth never increased and needed multiple simplifications
+            if not self.topic_depth_peaked and self.topic_simplify_count >= 2:
+                score = min(score, 4)
+
             self.topic_scores[self.current_topic] = max(1, score)
             self.topics_covered.append(self.current_topic)
+            print(
+                f"[score] {self.current_topic}: LLM={raw_score} → final={score} "
+                f"(idks={self.topic_idk_count}, simplifies={self.topic_simplify_count}, "
+                f"depth_peaked={self.topic_depth_peaked})",
+                flush=True,
+            )
 
             if self.topics_remaining:
                 self.current_topic = self.topics_remaining.pop(0)
                 self.current_depth = 1
                 self.exchanges_on_topic = 0
+                self.topic_idk_count = 0
+                self.topic_simplify_count = 0
+                self.topic_depth_peaked = False
             else:
                 self.is_interview_done = True
                 first_name = self.candidate_name.split()[0]
@@ -275,7 +318,7 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
             "topic_scores": self.topic_scores,
             "overall_score": score,
             "max_depth_reached": self.current_depth,
-            "recommendation": "Hire" if score >= 6.5 else "Hold" if score >= 5.0 else "Reject",
+            "recommendation": "Hire" if score >= 7.0 else "Hold" if score >= 5.0 else "Reject",
             "transcript": self.conversation_history,
             "is_flagged": self.is_flagged,
         }
