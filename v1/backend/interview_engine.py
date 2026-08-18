@@ -87,9 +87,11 @@ class InterviewEngine:
         self.exchanges_on_topic = 0
         self.face_embedding = None
         self._saved_to_admin = False
-        self.topic_idk_count = 0      # "I don't know" count for current topic
-        self.topic_simplify_count = 0  # depth-down moves for current topic
+        self.topic_idk_count = 0       # "I don't know" count for current topic
+        self.topic_simplify_count = 0   # depth-down moves for current topic
         self.topic_depth_peaked = False  # whether depth ever increased on this topic
+        self.topic_technical_started = False  # True once first real technical exchange lands
+        self.total_answers_seen = 0    # safety fallback — all answers regardless of phase
 
     def _build_resume_summary(self, r: dict) -> str:
         parts = []
@@ -143,10 +145,14 @@ Return ONLY valid JSON with the ACTUAL topic names (not placeholders):
 
     async def process_answer(self, candidate_answer: str) -> dict:
         self.conversation_history.append({"role": "user", "content": candidate_answer})
-        if len(candidate_answer.split()) >= 3:
-            self.exchanges_on_topic += 1
-        if _IDK_RE.search(candidate_answer):
-            self.topic_idk_count += 1
+        self.total_answers_seen += 1
+        # exchanges_on_topic and IDK only count AFTER the first real technical question lands.
+        # Pre-phase: warmup, off-topic questions, self-intro don't pollute the topic score.
+        if self.topic_technical_started:
+            if len(candidate_answer.split()) >= 3:
+                self.exchanges_on_topic += 1
+            if _IDK_RE.search(candidate_answer):
+                self.topic_idk_count += 1
 
         next_topic_hint = self.topics_remaining[0] if self.topics_remaining else "none — wrap up"
 
@@ -192,13 +198,13 @@ DECISION RULES:
    → Your response_text MUST ask the first question for "{next_topic_hint}" — NOT any other topic.
 4. WRAP UP: ONLY when Topics remaining is empty. action: wrap_up.
 
-STRICT SCORING RUBRIC — topic_score must reflect actual performance, not effort or politeness:
+STRICT SCORING RUBRIC — score ONLY the technical question-answer exchanges, NOT the warmup intro or off-topic chitchat:
 - 9-10: Unprompted depth, explains tradeoffs and edge cases, correct approach with no hints
 - 7-8: Correct approach with some depth, minor gaps, handled follow-ups well, no IDK
 - 5-6: Partial understanding, needed one hint, direction correct but missing key details
 - 3-4: Vague or partially wrong, needed multiple hints or simplifications to stay engaged
 - 1-2: Said "I don't know", gave up, completely off-track even after hints
-A friendly "I don't know" is STILL a 2. Effort and politeness do NOT raise the score.
+A friendly "I don't know" is STILL a 2. Effort and politeness do NOT raise the score. Off-topic questions ("how long will this take?") do NOT raise or lower the score.
 
 Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
 {{
@@ -243,14 +249,21 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
         self.current_depth = max(1, min(3, self.current_depth + depth_change))
         action = result.get("action")
 
-        # Python minimum: never leave a topic after only 1 exchange
+        # Mark technical phase started the first time LLM engages technically on this topic.
+        # This means warmup answers, off-topic questions, self-intros don't inflate counters.
+        if not self.topic_technical_started and action in ("go_deeper", "simplify", "next_topic", "bluff_called"):
+            self.topic_technical_started = True
+            self.exchanges_on_topic = 1  # this answer is the first real technical exchange
+            self.topic_idk_count = 0     # reset — don't penalise warmup IDKs
+
+        # Python minimum: never leave a topic after only 1 real technical exchange
         if self.exchanges_on_topic < 2 and action in ["next_topic", "wrap_up"]:
             action = "simplify"
             result["action"] = "simplify"
             result["depth_change"] = 0
 
-        # Python maximum: force topic change after 4 exchanges
-        if self.exchanges_on_topic >= 4 and action not in ["next_topic", "wrap_up"]:
+        # Python maximum: force topic change after 4 real exchanges (safety fallback for total answers too)
+        if (self.exchanges_on_topic >= 4 or self.total_answers_seen >= 10) and action not in ["next_topic", "wrap_up"]:
             action = "next_topic" if self.topics_remaining else "wrap_up"
             result["action"] = action
 
@@ -283,6 +296,8 @@ Return ONLY valid JSON (depth_change: integer -1, 0, or 1 — never null):
                 self.topic_idk_count = 0
                 self.topic_simplify_count = 0
                 self.topic_depth_peaked = False
+                self.topic_technical_started = True   # subsequent topics start technical immediately
+                self.total_answers_seen = 0
             else:
                 self.is_interview_done = True
                 first_name = self.candidate_name.split()[0]
